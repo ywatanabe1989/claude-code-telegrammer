@@ -1,10 +1,20 @@
 # claude-code-telegrammer
 
-Screen-based auto-responder watchdog for Claude Code TUI. Runs Claude Code as an autonomous Telegram agent with just GNU Screen and Bash.
+**Screen-based auto-responder watchdog for Claude Code TUI**
 
-## What It Does
+<p align="center">
+  <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
+</p>
 
-Claude Code's TUI blocks on permission prompts (`y/n`, `y/y/n`) and goes idle after completing tasks. claude-code-telegrammer polls the screen session, detects these states via pattern matching, and sends the appropriate keystrokes to keep the agent running unattended.
+---
+
+## Problem
+
+Claude Code's TUI blocks on permission prompts (`y/n`, `y/y/n`) and goes idle after completing tasks. Running Claude Code as an autonomous agent -- for example, as a Telegram bot -- requires something to detect these states and respond automatically, or the agent stalls within seconds.
+
+## Solution
+
+claude-code-telegrammer polls a GNU Screen session, detects Claude Code's TUI state via pattern matching, and sends the appropriate keystrokes to keep the agent running unattended. No modifications to Claude Code itself -- just screen buffer inspection and keystroke injection.
 
 ```
 Claude Code (in screen)
@@ -34,23 +44,16 @@ cd claude-code-telegrammer
 pip install -e .
 ```
 
-## Quick Start
-
-1. Start Claude Code in a screen session manually, or use the CLI:
+## Quickstart
 
 ```bash
+# Start an agent from a YAML config
 telegrammer start --config config/telegram-master.yaml
-```
 
-2. The watchdog begins polling automatically. Check status:
-
-```bash
+# Check status
 telegrammer status
-```
 
-3. Attach to the session to observe:
-
-```bash
+# Attach to the screen session to observe
 screen -r cld-telegram    # Ctrl-A D to detach
 ```
 
@@ -116,8 +119,6 @@ export TELEGRAMMER_RESP_WAITING="/speak-and-call"
 ```
 
 ## Configuration
-
-YAML config file (all fields under `spec`):
 
 ```yaml
 apiVersion: telegrammer/v1
