@@ -1,6 +1,6 @@
 # claude-code-telegrammer
 
-Screen-based auto-responder watchdog for Claude Code TUI. Runs Claude Code as an autonomous Telegram agent without Emacs -- just GNU Screen and Bash.
+Screen-based auto-responder watchdog for Claude Code TUI. Runs Claude Code as an autonomous Telegram agent with just GNU Screen and Bash.
 
 ## What It Does
 
