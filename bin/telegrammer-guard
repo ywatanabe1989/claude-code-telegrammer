@@ -1,0 +1,89 @@
+#!/bin/bash
+# telegrammer-guard — Lock/exclusivity guard for telegrammer
+# Ensures only one telegrammer instance runs at a time.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+# shellcheck source=../lib/common.sh
+source "${LIB_DIR}/common.sh"
+# shellcheck source=../lib/lock.sh
+source "${LIB_DIR}/lock.sh"
+
+# ── Defaults ──────────────────────────────────────────────────────────
+LOCK_PATH="${TELEGRAMMER_LOCK_PATH:-${DEFAULT_LOCK_PATH}}"
+
+# ── Usage ─────────────────────────────────────────────────────────────
+usage() {
+    cat <<'USAGE'
+Usage: telegrammer-guard <command> [OPTIONS]
+
+Commands:
+  acquire     Acquire the lock (exits 1 if already held)
+  release     Release the lock
+  status      Show lock status
+  check       Exit 0 if locked, 1 if not
+  force       Force-remove lock regardless of owner
+
+Options:
+  --lock PATH     Lock file path
+  --self-test     Run built-in tests
+  -h, --help      Show this help
+USAGE
+}
+
+# ── Parse args ────────────────────────────────────────────────────────
+COMMAND=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        acquire|release|status|check|force)
+            COMMAND="$1"; shift ;;
+        --lock)      LOCK_PATH="$2"; shift 2 ;;
+        --self-test) lock_self_test; exit $? ;;
+        -h|--help)   usage; exit 0 ;;
+        *) log_error "Unknown option: $1"; usage; exit 1 ;;
+    esac
+done
+
+if [[ -z "$COMMAND" ]]; then
+    usage
+    exit 1
+fi
+
+# ── Execute ───────────────────────────────────────────────────────────
+case "$COMMAND" in
+    acquire)
+        acquire_lock "$LOCK_PATH"
+        ;;
+    release)
+        release_lock "$LOCK_PATH"
+        ;;
+    status)
+        stale=$(check_stale "$LOCK_PATH")
+        case "$stale" in
+            no-lock)
+                echo "Not locked"
+                ;;
+            active)
+                pid=$(cat "$LOCK_PATH" 2>/dev/null || echo "?")
+                echo "Locked by PID $pid (active)"
+                ;;
+            stale|stale-empty)
+                echo "Stale lock detected (process not running)"
+                ;;
+        esac
+        ;;
+    check)
+        is_locked "$LOCK_PATH"
+        ;;
+    force)
+        if [[ -f "$LOCK_PATH" ]]; then
+            rm -f "$LOCK_PATH"
+            log_info "Force-removed lock: $LOCK_PATH"
+        else
+            log_info "No lock to remove"
+        fi
+        ;;
+esac
