@@ -1,6 +1,13 @@
+<!-- SciTeX Convention: Header (logo, tagline, badges) -->
 # claude-code-telegrammer
 
-**Screen-based auto-responder watchdog for Claude Code TUI**
+<p align="center">
+  <a href="https://scitex.ai">
+    <img src="docs/scitex-logo-blue-cropped.png" alt="SciTeX" width="400">
+  </a>
+</p>
+
+<p align="center"><b>Screen-based auto-responder watchdog for Claude Code TUI</b></p>
 
 <p align="center">
   <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
@@ -8,6 +15,7 @@
 
 ---
 
+<!-- SciTeX Convention: Problem & Solution -->
 ## Problem
 
 Claude Code's TUI blocks on permission prompts (`y/n`, `y/y/n`) and goes idle after completing tasks. Running Claude Code as an autonomous agent -- for example, as a Telegram bot -- requires something to detect these states and respond automatically, or the agent stalls within seconds.
@@ -28,6 +36,7 @@ Claude Code (in screen)
     +-- telegrammer-guard ensures single instance via lock file
 ```
 
+<!-- SciTeX Convention: Installation -->
 ## Installation
 
 Requires Python >= 3.10 and GNU Screen.
@@ -44,6 +53,7 @@ cd claude-code-telegrammer
 pip install -e .
 ```
 
+<!-- SciTeX Convention: Quickstart -->
 ## Quickstart
 
 ```bash
@@ -57,6 +67,7 @@ telegrammer status
 screen -r cld-telegram    # Ctrl-A D to detach
 ```
 
+<!-- Custom: Components (package-specific) -->
 ## Components
 
 ### telegrammer
@@ -100,6 +111,7 @@ Sends startup commands to a running Claude Code screen session and optionally co
 telegrammer-init --session cld-telegram --config telegram-master.yaml
 ```
 
+<!-- Custom: State Detection (package-specific) -->
 ## State Detection
 
 The watchdog reads the screen buffer and matches against these patterns:
@@ -118,6 +130,7 @@ export TELEGRAMMER_RESP_Y_Y_N="2"
 export TELEGRAMMER_RESP_WAITING="/speak-and-call"
 ```
 
+<!-- Custom: Configuration (package-specific) -->
 ## Configuration
 
 ```yaml
@@ -153,9 +166,10 @@ spec:
     backoff: exponential
 ```
 
-## Integration with scitex-agent-container
+<!-- SciTeX Convention: Ecosystem -->
+## Part of SciTeX
 
-claude-code-telegrammer is the low-level watchdog engine. [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container) provides the higher-level orchestration layer:
+claude-code-telegrammer is part of [**SciTeX**](https://scitex.ai). It is the low-level watchdog engine used by [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container) for higher-level agent lifecycle management.
 
 ```bash
 pip install scitex-agent-container[telegram]
@@ -163,8 +177,20 @@ pip install scitex-agent-container[telegram]
 
 When used together, scitex-agent-container handles lifecycle management (health checks, restart policies, hooks) while claude-code-telegrammer handles the screen-level auto-response.
 
-## License
+<!-- SciTeX Convention: Footer (Four Freedoms + icon) -->
+>Four Freedoms for Research
+>
+>0. The freedom to **run** your research anywhere -- your machine, your terms.
+>1. The freedom to **study** how every step works -- from raw data to final manuscript.
+>2. The freedom to **redistribute** your workflows, not just your papers.
+>3. The freedom to **modify** any module and share improvements with the community.
+>
+>AGPL-3.0 -- because we believe research infrastructure deserves the same freedoms as the software it runs on.
 
-AGPL-3.0
+---
+
+<p align="center">
+  <a href="https://scitex.ai" target="_blank"><img src="docs/scitex-icon-navy-inverted.png" alt="SciTeX" width="40"/></a>
+</p>
 
 <!-- EOF -->
