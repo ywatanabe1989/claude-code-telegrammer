@@ -1,0 +1,4 @@
+[console_scripts]
+telegrammer = claude_code_telegrammer.cli:telegrammer
+telegrammer-guard = claude_code_telegrammer.cli:telegrammer_guard
+telegrammer-watchdog = claude_code_telegrammer.cli:telegrammer_watchdog

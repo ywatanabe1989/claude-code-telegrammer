@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-code-telegrammer"
+version = "0.1.0"
+description = "Screen-based auto-responder watchdog for Claude Code TUI"
+readme = "README.md"
+license = "AGPL-3.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Yusuke Watanabe", email = "ywatanabe@scitex.ai" },
+]
+keywords = ["claude-code", "telegram", "watchdog", "auto-response"]
+
+[project.scripts]
+telegrammer = "claude_code_telegrammer.cli:telegrammer"
+telegrammer-watchdog = "claude_code_telegrammer.cli:telegrammer_watchdog"
+telegrammer-guard = "claude_code_telegrammer.cli:telegrammer_guard"
+telegrammer-init = "claude_code_telegrammer.cli:telegrammer_init"
+
+[project.urls]
+Repository = "https://github.com/ywatanabe1989/claude-code-telegrammer.git"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+claude_code_telegrammer = [
+    "bin/*",
+    "lib/*.sh",
+]

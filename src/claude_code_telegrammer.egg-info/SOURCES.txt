@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+src/claude_code_telegrammer/__init__.py
+src/claude_code_telegrammer/cli.py
+src/claude_code_telegrammer.egg-info/PKG-INFO
+src/claude_code_telegrammer.egg-info/SOURCES.txt
+src/claude_code_telegrammer.egg-info/dependency_links.txt
+src/claude_code_telegrammer.egg-info/entry_points.txt
+src/claude_code_telegrammer.egg-info/top_level.txt
+src/claude_code_telegrammer/bin/telegrammer
+src/claude_code_telegrammer/bin/telegrammer-guard
+src/claude_code_telegrammer/bin/telegrammer-watchdog
+src/claude_code_telegrammer/lib/auto-response.sh
+src/claude_code_telegrammer/lib/common.sh
+src/claude_code_telegrammer/lib/lock.sh
+src/claude_code_telegrammer/lib/state-detection.sh

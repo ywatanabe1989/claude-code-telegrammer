@@ -1,0 +1,30 @@
+apiVersion: telegrammer/v1
+kind: Agent
+metadata:
+  name: telegram-master
+spec:
+  model: opus[1m]
+  channels:
+    - plugin:telegram@claude-plugins-official
+  flags:
+    - --dangerously-skip-permissions
+    - --continue
+  workdir: ~/proj
+  env:
+    CLAUDE_AGENT_ROLE: telegram
+    CLAUDE_AGENT_ID: telegram-master
+  screen:
+    name: cld-telegram
+  watchdog:
+    enabled: true
+    interval: 1.5
+    responses:
+      y_n: "1"
+      y_y_n: "2"
+      waiting: "/speak-and-call"
+  lock:
+    path: ~/.claude/channels/telegram/telegram.lock
+  restart:
+    enabled: false
+    max_retries: 3
+    backoff: exponential

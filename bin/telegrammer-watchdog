@@ -1,0 +1,118 @@
+#!/bin/bash
+# telegrammer-watchdog — Screen-based auto-responder for Claude Code TUI
+# Replaces emacs-claude-code's auto-response system using screen only.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+# shellcheck source=../lib/common.sh
+source "${LIB_DIR}/common.sh"
+# shellcheck source=../lib/state-detection.sh
+source "${LIB_DIR}/state-detection.sh"
+# shellcheck source=../lib/auto-response.sh
+source "${LIB_DIR}/auto-response.sh"
+
+# ── Defaults ──────────────────────────────────────────────────────────
+SESSION="${TELEGRAMMER_SESSION:-cld-telegram}"
+INTERVAL="${TELEGRAMMER_WATCHDOG_INTERVAL:-1.5}"
+CAPTURE_FILE="${TELEGRAMMER_CAPTURE_DIR}/capture-${SESSION}.txt"
+TAIL_FILE="${TELEGRAMMER_CAPTURE_DIR}/tail-${SESSION}.txt"
+
+# Response map (overridable via env)
+RESP_Y_N="${TELEGRAMMER_RESP_Y_N:-1}"
+RESP_Y_Y_N="${TELEGRAMMER_RESP_Y_Y_N:-2}"
+RESP_WAITING="${TELEGRAMMER_RESP_WAITING:-/speak-and-call}"
+
+# ── Usage ─────────────────────────────────────────────────────────────
+usage() {
+    cat <<'USAGE'
+Usage: telegrammer-watchdog [OPTIONS]
+
+Options:
+  --session NAME     Screen session name (default: cld-telegram)
+  --interval SECS    Poll interval in seconds (default: 1.5)
+  --dry-run          Detect states but don't send responses
+  --self-test        Run built-in tests and exit
+  -h, --help         Show this help
+
+Environment:
+  TELEGRAMMER_SESSION              Screen session name
+  TELEGRAMMER_WATCHDOG_INTERVAL    Poll interval
+  TELEGRAMMER_RESP_Y_N             Response for y/n prompts (default: 1)
+  TELEGRAMMER_RESP_Y_Y_N           Response for y/y/n prompts (default: 2)
+  TELEGRAMMER_RESP_WAITING         Response when waiting (default: /speak-and-call)
+USAGE
+}
+
+# ── Parse args ────────────────────────────────────────────────────────
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --session)   SESSION="$2"; shift 2 ;;
+        --interval)  INTERVAL="$2"; shift 2 ;;
+        --dry-run)   DRY_RUN=1; shift ;;
+        --self-test) source "${LIB_DIR}/state-detection.sh"; state_detection_self_test; exit $? ;;
+        -h|--help)   usage; exit 0 ;;
+        *) log_error "Unknown option: $1"; usage; exit 1 ;;
+    esac
+done
+
+# ── Setup ─────────────────────────────────────────────────────────────
+ensure_dirs
+
+# ── Cleanup on exit ───────────────────────────────────────────────────
+cleanup() {
+    log_info "Watchdog shutting down"
+    rm -f "$CAPTURE_FILE" "$TAIL_FILE"
+}
+trap cleanup EXIT INT TERM
+
+# ── Main loop ─────────────────────────────────────────────────────────
+log_info "Watchdog starting: session=$SESSION interval=${INTERVAL}s"
+
+while true; do
+    # Check if screen session still exists
+    if ! screen_exists "$SESSION"; then
+        log_warn "Screen session '$SESSION' not found. Waiting..."
+        sleep "$INTERVAL"
+        continue
+    fi
+
+    # Capture screen buffer
+    if ! screen_capture "$SESSION" "$CAPTURE_FILE" 2>/dev/null; then
+        log_debug "Failed to capture screen buffer"
+        sleep "$INTERVAL"
+        continue
+    fi
+
+    # Get last ~50 lines
+    if [[ -f "$CAPTURE_FILE" ]]; then
+        tail -50 "$CAPTURE_FILE" > "$TAIL_FILE" 2>/dev/null || true
+    else
+        sleep "$INTERVAL"
+        continue
+    fi
+
+    # Detect state
+    state=$(detect_state "$TAIL_FILE")
+    log_debug "Detected state: $state"
+
+    # Respond
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        if [[ "$state" != "unknown" && "$state" != "running" ]]; then
+            log_info "[DRY-RUN] Would respond to state=$state"
+        fi
+    else
+        case "$state" in
+            y_n)     send_response "$SESSION" "$RESP_Y_N" "$state" ;;
+            y_y_n)   send_response "$SESSION" "$RESP_Y_Y_N" "$state" ;;
+            waiting) send_response "$SESSION" "$RESP_WAITING" "$state" ;;
+            running) ;;  # Do nothing
+            unknown) ;;  # Do nothing
+        esac
+    fi
+
+    sleep "$INTERVAL"
+done
