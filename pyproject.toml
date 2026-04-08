@@ -35,6 +35,7 @@ telegrammer-watchdog = "claude_code_telegrammer.cli:telegrammer_watchdog"
 telegrammer-guard = "claude_code_telegrammer.cli:telegrammer_guard"
 telegrammer-init = "claude_code_telegrammer.cli:telegrammer_init"
 telegrammer-relay = "claude_code_telegrammer.cli:telegrammer_relay"
+telegrammer-hook = "claude_code_telegrammer.cli:telegrammer_hook"
 
 [project.urls]
 Homepage = "https://github.com/ywatanabe1989/claude-code-telegrammer"

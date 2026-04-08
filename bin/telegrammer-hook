@@ -1,0 +1,80 @@
+#!/bin/bash
+# telegrammer-hook — Entry point for scitex-agent-container hooks
+# Called by agent-container's post_start/pre_stop hooks.
+#
+# Usage:
+#   telegrammer-hook post-start    # Setup telegram + start watchdog
+#   telegrammer-hook pre-stop      # Stop watchdog
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
+# Expect these env vars from agent-container:
+#   AGENT_CONFIG_PATH  — full path to agent YAML
+#   AGENT_SCREEN_NAME  — screen session name
+#   AGENT_NAME         — agent name
+
+cmd="${1:-}"
+
+case "$cmd" in
+  post-start)
+    # 1. Map bot_token_env → TELEGRAM_BOT_TOKEN
+    if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
+      BOT_TOKEN_ENV=$(yaml_get "$AGENT_CONFIG_PATH" "spec.telegram.bot_token_env" "")
+      if [[ -n "$BOT_TOKEN_ENV" && "$BOT_TOKEN_ENV" != "TELEGRAM_BOT_TOKEN" ]]; then
+        TOKEN_VAL="${!BOT_TOKEN_ENV:-}"
+        if [[ -n "$TOKEN_VAL" ]]; then
+          export TELEGRAM_BOT_TOKEN="$TOKEN_VAL"
+        fi
+      fi
+    fi
+
+    # 2. Run telegrammer-init (writes access.json + sends startup commands)
+    SESSION="${AGENT_SCREEN_NAME:-cld-telegram}"
+    if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
+      telegrammer-init --session "$SESSION" --config "$AGENT_CONFIG_PATH"
+    fi
+
+    # 3. Start watchdog if enabled
+    if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
+      WATCHDOG_ENABLED=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.enabled" "false")
+      if [[ "$WATCHDOG_ENABLED" == "true" || "$WATCHDOG_ENABLED" == "True" ]]; then
+        INTERVAL=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.interval" "1.5")
+        RESP_YN=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.responses.y_n" "1")
+        RESP_YYN=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.responses.y_y_n" "2")
+        RESP_WAIT=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.responses.waiting" "/speak-and-call")
+
+        WATCHDOG_SESSION="${SESSION}-watchdog"
+
+        export TELEGRAMMER_SESSION="$SESSION"
+        export TELEGRAMMER_WATCHDOG_INTERVAL="$INTERVAL"
+        export TELEGRAMMER_RESP_Y_N="$RESP_YN"
+        export TELEGRAMMER_RESP_Y_Y_N="$RESP_YYN"
+        export TELEGRAMMER_RESP_WAITING="$RESP_WAIT"
+
+        WATCHDOG_BIN=$(which telegrammer-watchdog 2>/dev/null || echo "")
+        if [[ -n "$WATCHDOG_BIN" ]]; then
+          screen -dmS "$WATCHDOG_SESSION" bash -c "$WATCHDOG_BIN --session $SESSION --interval $INTERVAL"
+          log_info "Watchdog started: $WATCHDOG_SESSION"
+        else
+          log_warn "telegrammer-watchdog not found in PATH"
+        fi
+      fi
+    fi
+    ;;
+
+  pre-stop)
+    SESSION="${AGENT_SCREEN_NAME:-cld-telegram}"
+    WATCHDOG_SESSION="${SESSION}-watchdog"
+    if screen -ls 2>/dev/null | grep -q "$WATCHDOG_SESSION"; then
+      screen -S "$WATCHDOG_SESSION" -X quit 2>/dev/null || true
+      log_info "Watchdog stopped: $WATCHDOG_SESSION"
+    fi
+    ;;
+
+  *)
+    echo "Usage: telegrammer-hook {post-start|pre-stop}"
+    exit 1
+    ;;
+esac

@@ -32,3 +32,7 @@ def telegrammer_init() -> None:
 
 def telegrammer_relay() -> None:
     _exec_script("telegrammer-relay")
+
+
+def telegrammer_hook() -> None:
+    _exec_script("telegrammer-hook")
