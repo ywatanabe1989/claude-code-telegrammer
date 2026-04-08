@@ -177,6 +177,57 @@ pip install scitex-agent-container[telegram]
 
 When used together, scitex-agent-container handles lifecycle management (health checks, restart policies, hooks) while claude-code-telegrammer handles the screen-level auto-response.
 
+<!-- Custom: Role in Pipeline (package-specific) -->
+## Role in the Agent Pipeline
+
+The Telegrammer bot illustrates how credentials cascade through the SciTeX agent stack:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ ~/.bash.d/secrets/                                      │
+│  SCITEX_OROCHI_TELEGRAM_BOT_TOKEN="..."                 │
+└──────────────────────────┬──────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│ scitex-orochi                                           │
+│  agents/orochi-telegrammer.yaml                         │
+│    bot_token_env: SCITEX_OROCHI_TELEGRAM_BOT_TOKEN      │
+│    (YAML holds env var NAME, never the secret)          │
+└──────────────────────────┬──────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│ scitex-agent-container                                  │
+│  Reads YAML, resolves env var, injects into session     │
+│  Manages lifecycle, health checks, restart policies     │
+└──────────────────────────┬──────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│ claude-code-telegrammer  ◀── YOU ARE HERE               │
+│  ✓ Polls screen buffer every 1.5s                       │
+│  ✓ Detects TUI prompts (y/n, y/y/n, idle)              │
+│  ✓ Sends keystrokes to unblock Claude Code              │
+│  ✓ Manages lock file for single-instance                │
+│  ✗ Does NOT manage, store, or handle bot tokens         │
+│  ✗ Does NOT communicate with Telegram API               │
+│  ✗ Does NOT know about YAML configs or orochi           │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Separation of Concerns
+
+| Layer | Responsibility | Token Handling |
+|-------|---------------|----------------|
+| **scitex-orochi** | Defines agent configs, Telegram bridge, dashboard | Owns env var name in YAML |
+| **scitex-agent-container** | Reads YAML, launches agent, injects env | Resolves and exports token |
+| **claude-code-telegrammer** (this) | TUI automation, screen polling | Receives via env, never manages |
+
+### What This Package Does NOT Do
+
+- **Token management** -- handled by upstream (scitex-agent-container)
+- **Telegram API calls** -- handled by Claude Code's built-in telegram plugin
+- **Agent lifecycle** -- handled by scitex-agent-container
+- **Orochi hub communication** -- handled by scitex-orochi
+
 <!-- SciTeX Convention: Footer (Four Freedoms + icon) -->
 >Four Freedoms for Research
 >
