@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "claude-code-telegrammer"
 version = "0.2.0"
-description = "Screen-based auto-responder watchdog for Claude Code TUI"
+description = "Custom Telegram MCP server + TUI auto-responder for running Claude Code as an autonomous Telegram agent"
 readme = "README.md"
 license = "AGPL-3.0"
 requires-python = ">=3.10"
