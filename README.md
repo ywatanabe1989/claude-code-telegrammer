@@ -260,7 +260,7 @@ Response throttling: minimum interval between responses, burst limit (10 in 3s w
 Add a `telegram` section and `hooks` to your agent YAML:
 
 ```yaml
-apiVersion: telegrammer/v1
+apiVersion: cld-agent/v1
 kind: Agent
 metadata:
   name: telegram-master
@@ -269,7 +269,7 @@ spec:
   flags:
     - --dangerously-skip-permissions
     - --strict-mcp-config
-    - "--mcp-config /tmp/scitex-agent-container/mcp-{agent-name}.json"
+    - "--mcp-config ~/.scitex/agent-container/cache/mcp-configs/mcp-{agent-name}.json"
     - "--dangerously-load-development-channels server:telegram"
   workdir: ~/proj
   env:

@@ -68,7 +68,7 @@ print('Wrote access.json with', len(users), 'allowed users to $STATE_DIR')
 
     # 4. Write MCP config JSON for --mcp-config
     AGENT_NAME="${AGENT_NAME:-telegrammer}"
-    MCP_DIR="/tmp/scitex-agent-container"
+    MCP_DIR="$HOME/.scitex/agent-container/cache/mcp-configs"
     mkdir -p "$MCP_DIR"
     # Find telegram-server.ts: check project root first, then relative to SCRIPT_DIR
     TS_SERVER=""

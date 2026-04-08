@@ -1,4 +1,4 @@
-apiVersion: telegrammer/v1
+apiVersion: cld-agent/v1
 kind: Agent
 metadata:
   name: telegram-master

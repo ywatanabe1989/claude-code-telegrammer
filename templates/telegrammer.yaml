@@ -1,0 +1,86 @@
+# Template: copy to ~/.scitex/orochi/agents/ and customize
+# Telegrammer agent -- Claude Code with Telegram MCP server
+apiVersion: cld-agent/v1
+kind: Agent
+metadata:
+  name: orochi-telegrammer
+  labels:
+    role: telegram
+    team: orochi
+    specialty: telegram
+spec:
+  runtime: claude-code
+  model: opus[1m]
+  workdir: ~/proj
+
+  skills:
+    required:
+      - quality-guards
+      - autonomous
+      - speech
+      - scitex
+    available:
+      - code-review
+      - orchestrator
+
+  claude:
+    channels: []
+    flags:
+      - --dangerously-skip-permissions
+      - --strict-mcp-config
+      - "--mcp-config ~/.scitex/agent-container/cache/mcp-configs/mcp-orochi-telegrammer.json"
+      - "--dangerously-load-development-channels server:telegram"
+    session: new
+
+  env:
+    CLAUDE_AGENT_ROLE: telegram
+    CLAUDE_AGENT_ID: orochi-telegrammer
+    SCITEX_OROCHI_DISABLE: "true"
+    TELEGRAM_STATE_DIR: ~/.scitex/agent-container/telegram/CHANGEME_BOT_ID
+    TELEGRAM_BOT_TOKEN: "${CHANGEME_BOT_TOKEN_ENV}"
+
+  telegram:
+    bot_token_env: CHANGEME_BOT_TOKEN_ENV
+    allowed_users:
+      - "CHANGEME_TELEGRAM_USER_ID"
+    auto_connect: true
+    greeting: "Telegrammer connected."
+
+  orochi:
+    hosts:
+      - CHANGEME_LAN_IP
+      - CHANGEME_DOMAIN
+    port: 8559
+    token_env: SCITEX_OROCHI_TOKEN
+    channels:
+      - server:scitex-orochi
+
+  screen:
+    name: cld-orochi-tg
+
+  health:
+    enabled: true
+    interval: 30
+    timeout: 5
+    method: screen-alive
+
+  restart:
+    policy: on-failure
+    max_retries: 3
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+
+  watchdog:
+    enabled: false
+
+  hooks:
+    pre_start:
+      - "telegrammer-hook pre-start"
+    post_start:
+      - "telegrammer-hook post-start"
+    pre_stop:
+      - "telegrammer-hook pre-stop"
+
+  startup_commands: []
