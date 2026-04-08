@@ -1,3 +1,9 @@
+<!-- ---
+!-- Timestamp: 2026-04-08 18:06:35
+!-- Author: ywatanabe
+!-- File: /home/ywatanabe/proj/claude-code-telegrammer/README.md
+!-- --- -->
+
 <!-- SciTeX Convention: Header (logo, tagline, badges) -->
 # claude-code-telegrammer
 
@@ -34,16 +40,16 @@ User (Telegram)
 │  Custom Telegram MCP Server (ts/telegram-server.ts)          │
 │    Bun + @modelcontextprotocol/sdk                           │
 │                                                              │
-│    ┌─────────┐  ┌─────────┐  ┌──────────┐  ┌────────────┐   │
-│    │ Poller  │  │  Store   │  │  Tools   │  │ Attachments│   │
-│    │ (long   │  │ (SQLite  │  │ (10 MCP  │  │ (download  │   │
-│    │  poll)  │  │  WAL)    │  │  tools)  │  │  queue)    │   │
-│    └─────────┘  └─────────┘  └──────────┘  └────────────┘   │
-│    ┌─────────┐  ┌─────────┐  ┌──────────┐                   │
-│    │ Access  │  │  Config  │  │   Lock   │                   │
-│    │ (allow- │  │ (env     │  │ (PID     │                   │
-│    │  list)  │  │  vars)   │  │  file)   │                   │
-│    └─────────┘  └─────────┘  └──────────┘                   │
+│    ┌─────────┐  ┌─────────┐  ┌──────────┐  ┌────────────┐    │
+│    │ Poller  │  │  Store  │  │  Tools   │  │ Attachments│    │
+│    │ (long   │  │ (SQLite │  │ (10 MCP  │  │ (download  │    │
+│    │  poll)  │  │  WAL)   │  │  tools)  │  │  queue)    │    │
+│    └─────────┘  └─────────┘  └──────────┘  └────────────┘    │
+│    ┌─────────┐  ┌─────────┐  ┌──────────┐                    │
+│    │ Access  │  │  Config │  │   Lock   │                    │
+│    │ (allow- │  │ (env    │  │ (PID     │                    │
+│    │  list)  │  │  vars)  │  │  file)   │                    │
+│    └─────────┘  └─────────┘  └──────────┘                    │
 └──────────────────────┬───────────────────────────────────────┘
                        │ MCP stdio
                        v
@@ -54,10 +60,10 @@ User (Telegram)
                        │ screen buffer
                        v
 ┌──────────────────────────────────────────────────────────────┐
-│  Watchdog (bin/telegrammer-watchdog)                          │
+│  Watchdog (bin/telegrammer-watchdog)                         │
 │    Polls screen buffer every 1.5s                            │
 │    Detects: y/n prompt -> "1", y/y/n -> "2", idle -> cmd     │
-│    Throttled: burst limit, same-state delay, min interval     │
+│    Throttled: burst limit, same-state delay, min interval    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -362,15 +368,15 @@ claude-code-telegrammer is part of [**SciTeX**](https://scitex.ai). It provides 
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ scitex-orochi         — agent definitions, dashboard     │
+│ scitex-orochi         — agent definitions, dashboard    │
 └──────────────────────────┬──────────────────────────────┘
                            v
 ┌─────────────────────────────────────────────────────────┐
-│ scitex-agent-container  — lifecycle, health, restart     │
+│ scitex-agent-container  — lifecycle, health, restart    │
 └──────────────────────────┬──────────────────────────────┘
                            v
 ┌─────────────────────────────────────────────────────────┐
-│ claude-code-telegrammer  <-- YOU ARE HERE                │
+│ claude-code-telegrammer  <-- YOU ARE HERE               │
 │   MCP server: Telegram API, message DB, 10 tools        │
 │   Watchdog: TUI auto-response, screen polling           │
 └─────────────────────────────────────────────────────────┘
