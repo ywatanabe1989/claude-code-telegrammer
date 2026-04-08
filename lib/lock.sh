@@ -3,7 +3,7 @@
 # Sourced by other scripts; also runnable with --self-test
 set -euo pipefail
 
-DEFAULT_LOCK_PATH="${HOME}/.claude/channels/telegram/telegram.lock"
+DEFAULT_LOCK_PATH="${TELEGRAM_STATE_DIR:-${HOME}/.scitex/agent-container/telegram}/telegram.lock"
 
 # ── Acquire lock ──────────────────────────────────────────────────────
 # Creates a lock file with the current PID.

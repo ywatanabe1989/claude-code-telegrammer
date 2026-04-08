@@ -96,7 +96,7 @@ telegrammer-watchdog --self-test        # run built-in state detection tests
 Lock/exclusivity guard. Ensures only one telegrammer instance controls a session at a time.
 
 ```bash
-telegrammer-guard acquire --lock ~/.claude/channels/telegram/telegram.lock
+telegrammer-guard acquire --lock ~/.scitex/agent-container/telegram/telegram.lock
 telegrammer-guard release
 telegrammer-guard status
 telegrammer-guard check     # exit 0 if locked, 1 if not
@@ -159,7 +159,7 @@ spec:
       y_y_n: "2"
       waiting: "/speak-and-call"
   lock:
-    path: ~/.claude/channels/telegram/telegram.lock
+    path: ~/.scitex/agent-container/telegram/telegram.lock
   restart:
     enabled: false
     max_retries: 3
