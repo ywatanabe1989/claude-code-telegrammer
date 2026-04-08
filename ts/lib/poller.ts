@@ -13,6 +13,7 @@ import {
   loadOffset,
   insertAttachment,
 } from "./store.js";
+import { queueDownload } from "./attachments.js";
 
 let updateOffset = 0;
 let polling = true;
@@ -151,6 +152,7 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
           mime_type: obj.mime_type,
           file_size: obj.file_size,
         });
+        queueDownload(rowId, obj.file_id, kind, chatId);
       } catch (err) {
         log("poller", "failed to insert attachment", {
           error: String(err),

@@ -12,6 +12,8 @@ export const STATE_DIR =
 export const ACCESS_FILE = join(STATE_DIR, "access.json");
 export const LOCK_FILE = join(STATE_DIR, "telegram-mcp.lock");
 export const INBOX_DIR = join(STATE_DIR, "inbox");
+export const ATTACHMENT_DIR =
+  process.env.TELEGRAM_ATTACHMENT_DIR ?? join(STATE_DIR, "attachments");
 
 export const TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 export const API_BASE = `https://api.telegram.org/bot${TOKEN}`;

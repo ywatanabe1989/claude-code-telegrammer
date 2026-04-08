@@ -8,16 +8,19 @@ import {
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { assertAllowedChat } from "./access.js";
-import { tgApi, sendMessage } from "./telegram-api.js";
+import { tgApi, sendMessage, sendDocument } from "./telegram-api.js";
 import {
   saveOutbound,
   getHistory,
   getUnread,
   markRead,
   markAllRead,
+  searchMessages,
+  getConversationContext,
 } from "./store.js";
 import { HOST_NAME, PROJECT, AGENT_ID, BOT_TOKEN_HASH } from "./config.js";
 import { log } from "./log.js";
+import { downloadNow } from "./attachments.js";
 
 export function registerTools(mcp: Server): void {
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -138,6 +141,92 @@ export function registerTools(mcp: Server): void {
           },
         },
       },
+      {
+        name: "download_attachment",
+        description:
+          "Download a Telegram file attachment immediately. Returns the local file path.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            file_id: {
+              type: "string",
+              description: "Telegram file_id from the attachment.",
+            },
+            chat_id: {
+              type: "string",
+              description:
+                "Chat ID for organizing downloads. Defaults to 'unknown'.",
+            },
+          },
+          required: ["file_id"],
+        },
+      },
+      {
+        name: "send_document",
+        description: "Upload a file to a Telegram chat via sendDocument API.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            chat_id: {
+              type: "string",
+              description: "Target chat ID.",
+            },
+            file_path: {
+              type: "string",
+              description: "Absolute path to the local file to upload.",
+            },
+            caption: {
+              type: "string",
+              description: "Optional caption for the document.",
+            },
+          },
+          required: ["chat_id", "file_path"],
+        },
+      },
+      {
+        name: "search_messages",
+        description:
+          "Text search across stored messages using LIKE matching. " +
+          "Returns matching messages in reverse chronological order.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            query: {
+              type: "string",
+              description: "Search text (matched with LIKE %query%).",
+            },
+            chat_id: {
+              type: "string",
+              description: "Filter by chat. Omit to search all chats.",
+            },
+            limit: {
+              type: "number",
+              description: "Max results. Default: 20.",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "get_context",
+        description:
+          "Get recent conversation context for a chat, formatted as compact text for LLM consumption. " +
+          "Returns messages in chronological order with timestamps and sender info.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            chat_id: {
+              type: "string",
+              description: "Chat to get context for.",
+            },
+            max_messages: {
+              type: "number",
+              description: "Max messages to include. Default: 10.",
+            },
+          },
+          required: ["chat_id"],
+        },
+      },
     ],
   }));
 
@@ -249,6 +338,43 @@ export function registerTools(mcp: Server): void {
               },
             ],
             isError: true,
+          };
+        }
+        case "download_attachment": {
+          const fileId = args.file_id as string;
+          const chatId = (args.chat_id as string) ?? "unknown";
+          const localPath = await downloadNow(fileId, chatId);
+          return {
+            content: [{ type: "text", text: `downloaded to: ${localPath}` }],
+          };
+        }
+        case "send_document": {
+          const chatId = args.chat_id as string;
+          const filePath = args.file_path as string;
+          const caption = args.caption as string | undefined;
+          assertAllowedChat(chatId);
+          const msgId = await sendDocument(chatId, filePath, caption);
+          return {
+            content: [{ type: "text", text: `document sent (id: ${msgId})` }],
+          };
+        }
+        case "search_messages": {
+          const query = args.query as string;
+          const chatId = args.chat_id as string | undefined;
+          const limit = (args.limit as number) ?? 20;
+          if (chatId) assertAllowedChat(chatId);
+          const rows = searchMessages(query, chatId, limit);
+          return {
+            content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+          };
+        }
+        case "get_context": {
+          const chatId = args.chat_id as string;
+          const maxMessages = (args.max_messages as number) ?? 10;
+          assertAllowedChat(chatId);
+          const context = getConversationContext(chatId, maxMessages);
+          return {
+            content: [{ type: "text", text: context }],
           };
         }
         default:

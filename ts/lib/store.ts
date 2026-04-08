@@ -25,6 +25,9 @@ let stmtSaveOffset: Statement | null = null;
 let stmtLoadOffset: Statement | null = null;
 let stmtInsertAttachment: Statement | null = null;
 let stmtSetRepliedAt: Statement | null = null;
+let stmtSearchAll: Statement | null = null;
+let stmtSearchChat: Statement | null = null;
+let stmtContextChat: Statement | null = null;
 
 // ── Schema ─────────────────────────────────────────────────────────────────
 
@@ -148,6 +151,18 @@ export function initStore(): void {
   stmtInsertAttachment = db.prepare(`
     INSERT INTO attachments (message_row_id, kind, file_id, file_unique_id, file_name, mime_type, file_size)
     VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  stmtSearchAll = db.prepare(`
+    SELECT * FROM messages WHERE text LIKE ? ORDER BY id DESC LIMIT ?
+  `);
+
+  stmtSearchChat = db.prepare(`
+    SELECT * FROM messages WHERE chat_id = ? AND text LIKE ? ORDER BY id DESC LIMIT ?
+  `);
+
+  stmtContextChat = db.prepare(`
+    SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
   `);
 
   log("store", `initialized at ${DB_PATH} (schema v2)`);
@@ -294,4 +309,42 @@ export function insertAttachment(
     attachment.mime_type ?? null,
     attachment.file_size ?? null,
   );
+}
+
+// ── Search & Context ──────────────────────────────────────────────────────
+
+export function searchMessages(
+  query: string,
+  chatId?: string,
+  limit: number = 20,
+): Array<Record<string, unknown>> {
+  if (!stmtSearchAll || !stmtSearchChat)
+    throw new Error("store not initialized");
+  const pattern = `%${query}%`;
+  if (chatId) {
+    return stmtSearchChat.all(chatId, pattern, limit) as Array<
+      Record<string, unknown>
+    >;
+  }
+  return stmtSearchAll.all(pattern, limit) as Array<Record<string, unknown>>;
+}
+
+export function getConversationContext(
+  chatId: string,
+  maxMessages: number = 10,
+): string {
+  if (!stmtContextChat) throw new Error("store not initialized");
+  const rows = stmtContextChat.all(chatId, maxMessages) as Array<
+    Record<string, unknown>
+  >;
+  // Reverse to chronological order (query is DESC)
+  rows.reverse();
+  return rows
+    .map((r) => {
+      const dir = r.direction === "inbound" ? "user" : "bot";
+      const who = r.username ?? r.user_id ?? dir;
+      const ts = r.telegram_ts ?? r.received_at ?? "";
+      return `[${ts}] ${who} (${dir}): ${r.text ?? ""}`;
+    })
+    .join("\n");
 }
