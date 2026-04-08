@@ -1,8 +1,9 @@
 /**
  * Access control — allowlist-based gating via access.json + env var.
+ * Caches parsed access.json with mtime-based invalidation.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import { ACCESS_FILE, ENV_ALLOWED } from "./config.js";
 import { log } from "./log.js";
 
@@ -12,27 +13,47 @@ export interface Access {
   groups: Record<string, { requireMention: boolean; allowFrom: string[] }>;
 }
 
-export function loadAccess(): Access {
-  const defaults: Access = {
+// ── Mtime-based cache ──────────────────────────────────────────────────────
+
+let cachedAccess: Access | null = null;
+let cachedMtimeMs: number = 0;
+
+function getDefaults(): Access {
+  return {
     dmPolicy: "allowlist",
     allowFrom: [...ENV_ALLOWED],
     groups: {},
   };
+}
+
+export function loadAccess(): Access {
+  // Check file mtime; only re-read if changed
   try {
+    const st = statSync(ACCESS_FILE);
+    if (cachedAccess && st.mtimeMs === cachedMtimeMs) {
+      return cachedAccess;
+    }
     const raw = readFileSync(ACCESS_FILE, "utf8");
     const parsed = JSON.parse(raw) as Partial<Access>;
     const fileAllow = parsed.allowFrom ?? [];
     const merged = [...new Set([...fileAllow, ...ENV_ALLOWED])];
-    return {
+    cachedAccess = {
       dmPolicy: parsed.dmPolicy ?? "allowlist",
       allowFrom: merged,
       groups: parsed.groups ?? {},
     };
+    cachedMtimeMs = st.mtimeMs;
+    return cachedAccess;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log(`access.json parse error, using defaults: ${err}`);
+      log("access", `access.json parse error, using defaults`, {
+        error: String(err),
+      });
     }
-    return defaults;
+    // On ENOENT or error, return defaults (don't cache — file may appear later)
+    cachedAccess = null;
+    cachedMtimeMs = 0;
+    return getDefaults();
   }
 }
 

@@ -28,11 +28,12 @@ export function acquireLock(): void {
     }
     if (!stale) {
       log(
+        "lock",
         "another instance is running (lock file exists with live PID). Exiting.",
       );
       process.exit(1);
     }
-    log("removing stale lock file");
+    log("lock", "removing stale lock file");
   }
   writeFileSync(LOCK_FILE, String(process.pid), { mode: 0o600 });
 }
