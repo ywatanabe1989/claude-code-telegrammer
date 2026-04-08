@@ -6,7 +6,7 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { tgApi } from "./telegram-api.js";
 import { isAllowed } from "./access.js";
 import { log } from "./log.js";
-import { saveInbound } from "./store.js";
+import { saveInbound, markRead } from "./store.js";
 
 let updateOffset = 0;
 let polling = true;
@@ -106,8 +106,9 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
 
   // Persist to SQLite before acking
   const ts = new Date((msg.date ?? 0) * 1000).toISOString();
+  let rowId: number | null = null;
   try {
-    saveInbound({
+    rowId = saveInbound({
       chat_id: chatId,
       message_id: String(msg.message_id),
       user_id: userId,

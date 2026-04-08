@@ -18,18 +18,20 @@ export function initStore(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      direction TEXT NOT NULL,
       chat_id TEXT NOT NULL,
       message_id TEXT,
       user_id TEXT,
       username TEXT,
-      text TEXT,
-      timestamp TEXT NOT NULL,
+      received_contents TEXT,
+      replied_contents TEXT,
       metadata TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
+      received_at TEXT DEFAULT (datetime('now')),
+      read_at TEXT,
+      replied_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_chat_id ON messages(chat_id);
-    CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_received_at ON messages(received_at);
+    CREATE INDEX IF NOT EXISTS idx_unread ON messages(read_at) WHERE read_at IS NULL;
   `);
   log(`message store initialized at ${DB_PATH}`);
 }
@@ -45,8 +47,8 @@ export function saveInbound(msg: {
 }): number {
   if (!db) throw new Error("store not initialized");
   const stmt = db.prepare(`
-    INSERT INTO messages (direction, chat_id, message_id, user_id, username, text, timestamp, metadata)
-    VALUES ('inbound', ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (chat_id, message_id, user_id, username, received_contents, metadata, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     msg.chat_id,
@@ -54,8 +56,8 @@ export function saveInbound(msg: {
     msg.user_id,
     msg.username,
     msg.text,
-    msg.timestamp,
     msg.metadata ? JSON.stringify(msg.metadata) : null,
+    msg.timestamp,
   );
   return Number(result.lastInsertRowid);
 }
@@ -64,19 +66,55 @@ export function saveOutbound(
   chatId: string,
   text: string,
   messageId?: string,
-): number {
+): void {
   if (!db) throw new Error("store not initialized");
-  const stmt = db.prepare(`
-    INSERT INTO messages (direction, chat_id, message_id, text, timestamp)
-    VALUES ('outbound', ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    chatId,
-    messageId ?? null,
-    text,
-    new Date().toISOString(),
-  );
-  return Number(result.lastInsertRowid);
+  // Update the most recent unread inbound message with the reply
+  const updated = db
+    .prepare(
+      "UPDATE messages SET replied_contents = ?, replied_at = datetime('now') WHERE chat_id = ? AND replied_at IS NULL ORDER BY id DESC LIMIT 1",
+    )
+    .run(text, chatId);
+  // If no unread message to attach to, insert as standalone outbound
+  if (updated.changes === 0) {
+    db.prepare(
+      "INSERT INTO messages (chat_id, message_id, replied_contents, received_at, replied_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+    ).run(chatId, messageId ?? null, text);
+  }
+}
+
+export function markRead(id: number): void {
+  if (!db) throw new Error("store not initialized");
+  db.prepare(
+    "UPDATE messages SET read_at = datetime('now') WHERE id = ? AND read_at IS NULL",
+  ).run(id);
+}
+
+export function markAllRead(chatId: string): void {
+  if (!db) throw new Error("store not initialized");
+  db.prepare(
+    "UPDATE messages SET read_at = datetime('now') WHERE chat_id = ? AND read_at IS NULL",
+  ).run(chatId);
+}
+
+export function markReplied(chatId: string): void {
+  if (!db) throw new Error("store not initialized");
+  db.prepare(
+    "UPDATE messages SET replied_at = datetime('now') WHERE chat_id = ? AND replied_at IS NULL",
+  ).run(chatId);
+}
+
+export function getUnread(chatId?: string): Array<Record<string, unknown>> {
+  if (!db) throw new Error("store not initialized");
+  if (chatId) {
+    return db
+      .prepare(
+        "SELECT * FROM messages WHERE chat_id = ? AND read_at IS NULL ORDER BY id",
+      )
+      .all(chatId) as Array<Record<string, unknown>>;
+  }
+  return db
+    .prepare("SELECT * FROM messages WHERE read_at IS NULL ORDER BY id")
+    .all() as Array<Record<string, unknown>>;
 }
 
 export function getHistory(
@@ -84,8 +122,9 @@ export function getHistory(
   limit: number = 50,
 ): Array<Record<string, unknown>> {
   if (!db) throw new Error("store not initialized");
-  const stmt = db.prepare(`
-    SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
-  `);
-  return stmt.all(chatId, limit) as Array<Record<string, unknown>>;
+  return db
+    .prepare(
+      "SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+    )
+    .all(chatId, limit) as Array<Record<string, unknown>>;
 }
