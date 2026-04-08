@@ -75,6 +75,13 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
   }
   if (!text) return;
 
+  // Ack: react with 👀 so user knows message was received
+  tgApi("setMessageReaction", {
+    chat_id: chatId,
+    message_id: msg.message_id,
+    reaction: [{ type: "emoji", emoji: "👀" }],
+  }).catch(() => {});
+
   // Fire-and-forget typing indicator
   tgApi("sendChatAction", { chat_id: chatId, action: "typing" }).catch(
     () => {},
@@ -109,10 +116,12 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
   meta.source = "telegram";
 
   log(`delivering message from ${userId} in ${chatId}: "${text.slice(0, 50)}"`);
-  mcp.notification({
-    method: "notifications/claude/channel",
-    params: { content: text, meta },
-  }).catch((err) => {
-    log(`failed to deliver inbound to Claude: ${err}`);
-  });
+  mcp
+    .notification({
+      method: "notifications/claude/channel",
+      params: { content: text, meta },
+    })
+    .catch((err) => {
+      log(`failed to deliver inbound to Claude: ${err}`);
+    });
 }
