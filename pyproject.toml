@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "claude-code-telegrammer"
-version = "0.1.0"
-description = "Screen-based auto-responder watchdog for Claude Code TUI"
+version = "0.3.0"
+description = "Custom Telegram MCP server + TUI auto-responder for running Claude Code as an autonomous Telegram agent"
 readme = "README.md"
 license = "AGPL-3.0"
 requires-python = ">=3.10"
@@ -13,21 +13,43 @@ authors = [
     { name = "Yusuke Watanabe", email = "ywatanabe@scitex.ai" },
 ]
 keywords = ["claude-code", "telegram", "watchdog", "auto-response"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Unix Shell",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries",
+]
 
 [project.scripts]
 telegrammer = "claude_code_telegrammer.cli:telegrammer"
 telegrammer-watchdog = "claude_code_telegrammer.cli:telegrammer_watchdog"
 telegrammer-guard = "claude_code_telegrammer.cli:telegrammer_guard"
 telegrammer-init = "claude_code_telegrammer.cli:telegrammer_init"
+telegrammer-relay = "claude_code_telegrammer.cli:telegrammer_relay"
+telegrammer-hook = "claude_code_telegrammer.cli:telegrammer_hook"
 
 [project.urls]
+Homepage = "https://github.com/ywatanabe1989/claude-code-telegrammer"
 Repository = "https://github.com/ywatanabe1989/claude-code-telegrammer.git"
+Issues = "https://github.com/ywatanabe1989/claude-code-telegrammer/issues"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_code_telegrammer"]
 
-[tool.setuptools.package-data]
-claude_code_telegrammer = [
-    "bin/*",
-    "lib/*.sh",
+[tool.hatch.build.targets.wheel.shared-data]
+
+[tool.hatch.build]
+# Force inclusion of symlinked directories
+artifacts = [
+    "src/claude_code_telegrammer/bin/*",
+    "src/claude_code_telegrammer/lib/*",
 ]

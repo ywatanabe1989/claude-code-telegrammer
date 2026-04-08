@@ -23,7 +23,12 @@ spec:
       y_y_n: "2"
       waiting: "/speak-and-call"
   lock:
-    path: ~/.claude/channels/telegram/telegram.lock
+    path: ~/.scitex/agent-container/telegram/telegram.lock
+  orochi:
+    host: 192.168.0.102
+    dashboard_port: 8559
+    channel: "#telegram"
+    master_screen: "orochi-agent:master"
   restart:
     enabled: false
     max_retries: 3

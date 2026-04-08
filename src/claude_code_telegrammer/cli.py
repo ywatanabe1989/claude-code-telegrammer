@@ -28,3 +28,11 @@ def telegrammer_guard() -> None:
 
 def telegrammer_init() -> None:
     _exec_script("telegrammer-init")
+
+
+def telegrammer_relay() -> None:
+    _exec_script("telegrammer-relay")
+
+
+def telegrammer_hook() -> None:
+    _exec_script("telegrammer-hook")

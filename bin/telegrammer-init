@@ -64,12 +64,12 @@ AUTO_CONNECT=$(echo "$PARSED" | python3 -c "import sys,json; d=json.load(sys.std
 ALLOWED_USERS=$(echo "$PARSED" | python3 -c "import sys,json; d=json.load(sys.stdin); users=d.get('telegram',{}).get('allowed_users',[]); print(json.dumps(users))")
 
 if [[ "$AUTO_CONNECT" == "true" && "$ALLOWED_USERS" != "[]" ]]; then
-    ACCESS_DIR="$HOME/.claude/channels/telegram"
+    ACCESS_DIR="${TELEGRAM_STATE_DIR:-$HOME/.scitex/agent-container/telegram}"
     mkdir -p "$ACCESS_DIR"
     python3 -c "
 import json
 users = json.loads('$ALLOWED_USERS')
-data = {'dmPolicy': 'pairing', 'allowFrom': [str(u) for u in users]}
+data = {'dmPolicy': 'allowlist', 'allowFrom': [str(u) for u in users]}
 with open('$ACCESS_DIR/access.json', 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
