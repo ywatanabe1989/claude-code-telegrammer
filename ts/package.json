@@ -1,0 +1,13 @@
+{
+  "name": "telegram-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Custom Telegram MCP server for claude-code-telegrammer",
+  "scripts": {
+    "start": "bun run telegram-server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  }
+}

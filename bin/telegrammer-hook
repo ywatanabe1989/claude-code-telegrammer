@@ -3,7 +3,8 @@
 # Called by agent-container's post_start/pre_stop hooks.
 #
 # Usage:
-#   telegrammer-hook post-start    # Setup telegram + start watchdog
+#   telegrammer-hook pre-start     # Write access.json (before Claude Code)
+#   telegrammer-hook post-start    # Start watchdog + send startup commands
 #   telegrammer-hook pre-stop      # Stop watchdog
 
 set -euo pipefail
@@ -18,25 +19,110 @@ source "$SCRIPT_DIR/lib/common.sh"
 cmd="${1:-}"
 
 case "$cmd" in
-  post-start)
+  pre-start)
+    if [[ -z "${AGENT_CONFIG_PATH:-}" ]]; then
+      log_warn "AGENT_CONFIG_PATH not set, skipping pre-start"
+      exit 0
+    fi
+
     # 1. Map bot_token_env → TELEGRAM_BOT_TOKEN
-    if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
-      BOT_TOKEN_ENV=$(yaml_get "$AGENT_CONFIG_PATH" "spec.telegram.bot_token_env" "")
-      if [[ -n "$BOT_TOKEN_ENV" && "$BOT_TOKEN_ENV" != "TELEGRAM_BOT_TOKEN" ]]; then
-        TOKEN_VAL="${!BOT_TOKEN_ENV:-}"
-        if [[ -n "$TOKEN_VAL" ]]; then
-          export TELEGRAM_BOT_TOKEN="$TOKEN_VAL"
-        fi
+    BOT_TOKEN_ENV=$(yaml_get "$AGENT_CONFIG_PATH" "spec.telegram.bot_token_env" "")
+    if [[ -n "$BOT_TOKEN_ENV" && "$BOT_TOKEN_ENV" != "TELEGRAM_BOT_TOKEN" ]]; then
+      TOKEN_VAL="${!BOT_TOKEN_ENV:-}"
+      if [[ -n "$TOKEN_VAL" ]]; then
+        export TELEGRAM_BOT_TOKEN="$TOKEN_VAL"
       fi
     fi
 
-    # 2. Run telegrammer-init (writes access.json + sends startup commands)
+    # 2. Write access.json
+    AUTO_CONNECT=$(yaml_get "$AGENT_CONFIG_PATH" "spec.telegram.auto_connect" "true")
+    STATE_DIR="${TELEGRAM_STATE_DIR:-$HOME/.scitex/agent-container/telegram}"
+
+    # Resolve bot_id from token for state dir
+    if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+      BOT_ID="${TELEGRAM_BOT_TOKEN%%:*}"
+      STATE_DIR="$HOME/.scitex/agent-container/telegram/$BOT_ID"
+    fi
+    mkdir -p "$STATE_DIR"
+
+    # Parse allowed_users via Python (yaml_get returns flat values, not JSON)
+    if [[ "$AUTO_CONNECT" == "true" || "$AUTO_CONNECT" == "True" ]]; then
+      python3 -c "
+import yaml, json
+with open('$AGENT_CONFIG_PATH') as f:
+    raw = yaml.safe_load(f)
+users = raw.get('spec',{}).get('telegram',{}).get('allowed_users',[]) or []
+users = [str(u) for u in users]
+data = {'dmPolicy': 'allowlist', 'allowFrom': users}
+with open('$STATE_DIR/access.json', 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+print('Wrote access.json with', len(users), 'allowed users to $STATE_DIR')
+"
+    fi
+
+    # 3. Write .env for the MCP server
+    echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}" > "$STATE_DIR/.env"
+    chmod 600 "$STATE_DIR/.env"
+    log_info "Wrote .env to $STATE_DIR"
+
+    # 4. Write MCP config JSON for --mcp-config
+    AGENT_NAME="${AGENT_NAME:-telegrammer}"
+    MCP_DIR="/tmp/scitex-agent-container"
+    mkdir -p "$MCP_DIR"
+    # Find telegram-server.ts: check project root first, then relative to SCRIPT_DIR
+    TS_SERVER=""
+    for candidate in \
+      "$SCRIPT_DIR/../ts/telegram-server.ts" \
+      "$SCRIPT_DIR/ts/telegram-server.ts" \
+      "$(python3 -c 'import claude_code_telegrammer; import os; print(os.path.join(os.path.dirname(claude_code_telegrammer.__file__), "..", "..", "ts", "telegram-server.ts"))' 2>/dev/null)" \
+    ; do
+      if [[ -f "$candidate" ]]; then
+        TS_SERVER="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+        break
+      fi
+    done
+    if [[ -z "$TS_SERVER" ]]; then
+      log_warn "telegram-server.ts not found"
+      exit 1
+    fi
+
+    python3 -c "
+import yaml, json, os
+with open('$AGENT_CONFIG_PATH') as f:
+    raw = yaml.safe_load(f)
+users = raw.get('spec',{}).get('telegram',{}).get('allowed_users',[]) or []
+users_str = ','.join(str(u) for u in users)
+config = {
+    'mcpServers': {
+        'telegram': {
+            'type': 'stdio',
+            'command': 'bun',
+            'args': ['run', '$TS_SERVER'],
+            'env': {
+                'TELEGRAM_BOT_TOKEN': os.environ.get('TELEGRAM_BOT_TOKEN', ''),
+                'TELEGRAM_STATE_DIR': '$STATE_DIR',
+                'TELEGRAM_ALLOWED_USERS': users_str
+            }
+        }
+    }
+}
+path = '$MCP_DIR/mcp-$AGENT_NAME.json'
+with open(path, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+print('Wrote MCP config to', path)
+"
+    ;;
+
+  post-start)
+    # Send startup commands (screen must exist)
     SESSION="${AGENT_SCREEN_NAME:-cld-telegram}"
     if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
       telegrammer-init --session "$SESSION" --config "$AGENT_CONFIG_PATH"
     fi
 
-    # 3. Start watchdog if enabled
+    # Start watchdog if enabled
     if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
       WATCHDOG_ENABLED=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.enabled" "false")
       if [[ "$WATCHDOG_ENABLED" == "true" || "$WATCHDOG_ENABLED" == "True" ]]; then
