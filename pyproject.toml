@@ -29,6 +29,15 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
+[project.optional-dependencies]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "myst-parser>=2.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-autodoc-typehints>=1.25",
+]
+
 [project.scripts]
 telegrammer = "claude_code_telegrammer.cli:telegrammer"
 telegrammer-watchdog = "claude_code_telegrammer.cli:telegrammer_watchdog"
