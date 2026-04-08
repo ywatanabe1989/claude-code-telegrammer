@@ -6,6 +6,7 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { tgApi } from "./telegram-api.js";
 import { isAllowed } from "./access.js";
 import { log } from "./log.js";
+import { saveInbound } from "./store.js";
 
 let updateOffset = 0;
 let polling = true;
@@ -75,18 +76,6 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
   }
   if (!text) return;
 
-  // Ack: react with 👀 so user knows message was received
-  tgApi("setMessageReaction", {
-    chat_id: chatId,
-    message_id: msg.message_id,
-    reaction: [{ type: "emoji", emoji: "👀" }],
-  }).catch(() => {});
-
-  // Fire-and-forget typing indicator
-  tgApi("sendChatAction", { chat_id: chatId, action: "typing" }).catch(
-    () => {},
-  );
-
   const meta: Record<string, string> = {
     chat_id: chatId,
     message_id: String(msg.message_id),
@@ -114,6 +103,34 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
   }
 
   meta.source = "telegram";
+
+  // Persist to SQLite before acking
+  const ts = new Date((msg.date ?? 0) * 1000).toISOString();
+  try {
+    saveInbound({
+      chat_id: chatId,
+      message_id: String(msg.message_id),
+      user_id: userId,
+      username: msg.from.username ?? userId,
+      text,
+      timestamp: ts,
+      metadata: meta,
+    });
+  } catch (err) {
+    log(`failed to save inbound message to store: ${err}`);
+  }
+
+  // Ack: react with 👀 only after SQLite insert succeeds
+  tgApi("setMessageReaction", {
+    chat_id: chatId,
+    message_id: msg.message_id,
+    reaction: [{ type: "emoji", emoji: "👀" }],
+  }).catch(() => {});
+
+  // Fire-and-forget typing indicator
+  tgApi("sendChatAction", { chat_id: chatId, action: "typing" }).catch(
+    () => {},
+  );
 
   log(`delivering message from ${userId} in ${chatId}: "${text.slice(0, 50)}"`);
   mcp

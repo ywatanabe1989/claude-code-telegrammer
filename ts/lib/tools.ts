@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { assertAllowedChat } from "./access.js";
 import { tgApi, sendMessage } from "./telegram-api.js";
+import { saveOutbound } from "./store.js";
 
 export function registerTools(mcp: Server): void {
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -76,6 +77,13 @@ export function registerTools(mcp: Server): void {
             args.reply_to != null ? Number(args.reply_to) : undefined;
           assertAllowedChat(chatId);
           const msgId = await sendMessage(chatId, text, replyTo);
+          try {
+            saveOutbound(chatId, text, String(msgId));
+          } catch (err) {
+            // Log but don't fail the reply if store write fails
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(`failed to save outbound to store: ${errMsg}`);
+          }
           return { content: [{ type: "text", text: `sent (id: ${msgId})` }] };
         }
         case "react": {

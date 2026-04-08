@@ -26,6 +26,7 @@ import { log } from "./lib/log.js";
 import { acquireLock, releaseLock } from "./lib/lock.js";
 import { registerTools } from "./lib/tools.js";
 import { startPolling, stopPolling } from "./lib/poller.js";
+import { initStore } from "./lib/store.js";
 
 // ── Validate token ──────────────────────────────────────────────────────────
 
@@ -92,6 +93,7 @@ process.on("SIGINT", shutdown);
 // ── Main ────────────────────────────────────────────────────────────────────
 
 acquireLock();
+initStore();
 await mcp.connect(new StdioServerTransport());
 log("MCP server connected via stdio");
 
