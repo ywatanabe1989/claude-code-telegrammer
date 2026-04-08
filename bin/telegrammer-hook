@@ -107,11 +107,32 @@ config = {
         }
     }
 }
+# Write to both /tmp (for --mcp-config) and workdir .mcp.json (for --dangerously-load-development-channels)
 path = '$MCP_DIR/mcp-$AGENT_NAME.json'
 with open(path, 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 print('Wrote MCP config to', path)
+
+# Also write to workdir .mcp.json so --dangerously-load-development-channels can find it
+import yaml as _yaml
+with open('$AGENT_CONFIG_PATH') as f:
+    agent_cfg = _yaml.safe_load(f)
+workdir = os.path.expanduser(agent_cfg.get('spec', {}).get('workdir', '~/proj'))
+mcp_json_path = os.path.join(workdir, '.mcp.json')
+# Merge with existing .mcp.json if present
+existing = {}
+try:
+    with open(mcp_json_path) as f:
+        existing = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+existing.setdefault('mcpServers', {})
+existing['mcpServers']['telegram'] = config['mcpServers']['telegram']
+with open(mcp_json_path, 'w') as f:
+    json.dump(existing, f, indent=2)
+    f.write('\n')
+print('Wrote .mcp.json to', mcp_json_path)
 "
     ;;
 
