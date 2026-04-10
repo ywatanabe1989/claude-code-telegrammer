@@ -107,11 +107,23 @@
 
 ### Important: Bot Token Exclusivity
 
-This MCP server **must be the sole consumer** of its configured Telegram bot token. The Telegram Bot API enforces a single active `getUpdates` long-polling connection per token. If another component (e.g., `scitex-orochi`'s Telegram bridge) also polls the same token, **HTTP 409 Conflict** errors will occur, causing both consumers to miss messages.
+This MCP server **must be the sole consumer** of its configured Telegram bot token. The Telegram Bot API allows only one `getUpdates` long-polling connection per token.
 
-**If you see 409 errors:**
-- Disable the other polling component, **or**
-- Use a separate bot token for each component
+**What happens with duplicate consumers:**
+
+| Scenario | Symptom | Detection |
+|----------|---------|-----------|
+| Two pollers start simultaneously | One gets 409, the other wins silently | The loser sees `409 Conflict` in logs |
+| Two pollers start sequentially | Both appear to work, but only one receives messages | **No error** — the other poller gets empty responses forever |
+| Webhook active + poller | Poller gets nothing | **No error** — Telegram ignores `getUpdates` when webhook is set |
+
+**Why 409 detection alone is insufficient:** The Telegram API does not reliably return 409 for all conflict cases. When two consumers poll sequentially (not overlapping), both connections succeed — one simply receives all messages while the other gets none, with no error. The server performs a `timeout=3` preflight check at startup to catch overlapping polls, but this cannot detect the sequential case.
+
+**If messages aren't arriving:**
+1. Check if another process is polling the same token: `ps aux | grep telegram-server`
+2. Check if a webhook is set: `curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo`
+3. Use a separate bot token per component (recommended)
+4. Or disable the other consumer
 
 ## Installation
 
@@ -177,7 +189,7 @@ claude \
     --dangerously-load-development-channels server:claude-code-telegrammer
 ```
 
-For full agent orchestration (screen sessions, watchdog, YAML configs), see [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container).
+You should see `Listening for channel messages from: server:claude-code-telegrammer` in the Claude Code TUI. Send a message from Telegram to your bot — Claude Code will receive it as a channel notification.
 
 ## Interfaces
 
