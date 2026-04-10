@@ -1,7 +1,7 @@
 ---
 name: claude-code-telegrammer
 description: TUI watchdog for Claude Code — screen polling, auto-response, lock management. Bottom layer of the SciTeX agent stack.
-version: 0.3.0
+version: 0.4.0
 ---
 
 # claude-code-telegrammer
