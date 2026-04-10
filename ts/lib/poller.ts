@@ -56,6 +56,36 @@ export async function startPolling(mcp: Server): Promise<void> {
     log("poller", `getMe failed: ${err}`);
   }
 
+  // Preflight: try a non-blocking getUpdates to detect competing consumers
+  try {
+    await tgApi("getUpdates", { offset: updateOffset, timeout: 0, limit: 1 });
+    log("poller", "preflight OK — no competing consumers detected");
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (errMsg.includes("409")) {
+      const fatalMsg =
+        "FATAL: 409 Conflict on startup — another process is already polling this bot token. " +
+        "Only one getUpdates consumer is allowed per token. " +
+        "Stop the other consumer first, or use a different bot token. " +
+        "Refusing to start.";
+      log("poller", fatalMsg);
+      // Notify the agent so it knows Telegram is NOT connected
+      mcp
+        .notification({
+          method: "notifications/claude/channel",
+          params: {
+            content: fatalMsg,
+            meta: { source: "telegram", type: "error" },
+          },
+        })
+        .catch(() => {});
+      polling = false;
+      return;
+    }
+    // Non-409 errors are OK to proceed (e.g., network hiccup)
+    log("poller", `preflight warning: ${errMsg} (proceeding anyway)`);
+  }
+
   while (polling) {
     try {
       const updates = await tgApi("getUpdates", {
@@ -85,14 +115,23 @@ export async function startPolling(mcp: Server): Promise<void> {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       if (errMsg.includes("409")) {
-        log(
-          "poller",
+        const conflictMsg =
           "409 Conflict — another process is polling this bot token. " +
-            "Only one getUpdates consumer is allowed per token. " +
-            "If scitex-orochi's Telegram bridge is active, disable it or use a separate bot token. " +
-            "Retrying in 5s...",
-        );
-        await new Promise((r) => setTimeout(r, 5000));
+          "Only one getUpdates consumer is allowed per token. " +
+          "Telegram connection is DOWN. Stop the other consumer or use a different bot token.";
+        log("poller", conflictMsg);
+        mcp
+          .notification({
+            method: "notifications/claude/channel",
+            params: {
+              content: conflictMsg,
+              meta: { source: "telegram", type: "error" },
+            },
+          })
+          .catch(() => {});
+        // Stop polling — don't retry, the agent needs to fix this
+        polling = false;
+        return;
       } else {
         log("poller", `getUpdates error: ${errMsg}. Retrying in 3s...`);
         await new Promise((r) => setTimeout(r, 3000));
