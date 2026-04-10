@@ -85,7 +85,13 @@ export async function startPolling(mcp: Server): Promise<void> {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       if (errMsg.includes("409")) {
-        log("poller", "409 Conflict — another instance polling. Waiting 5s...");
+        log(
+          "poller",
+          "409 Conflict — another process is polling this bot token. " +
+            "Only one getUpdates consumer is allowed per token. " +
+            "If scitex-orochi's Telegram bridge is active, disable it or use a separate bot token. " +
+            "Retrying in 5s...",
+        );
         await new Promise((r) => setTimeout(r, 5000));
       } else {
         log("poller", `getUpdates error: ${errMsg}. Retrying in 3s...`);

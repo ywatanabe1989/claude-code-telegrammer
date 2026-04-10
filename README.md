@@ -105,6 +105,14 @@
 
 </details>
 
+### Important: Bot Token Exclusivity
+
+This MCP server **must be the sole consumer** of its configured Telegram bot token. The Telegram Bot API enforces a single active `getUpdates` long-polling connection per token. If another component (e.g., `scitex-orochi`'s Telegram bridge) also polls the same token, **HTTP 409 Conflict** errors will occur, causing both consumers to miss messages.
+
+**If you see 409 errors:**
+- Disable the other polling component, **or**
+- Use a separate bot token for each component
+
 ## Installation
 
 ### Prerequisites
