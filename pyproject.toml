@@ -45,5 +45,3 @@ Issues = "https://github.com/ywatanabe1989/claude-code-telegrammer/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/claude_code_telegrammer"]
-
-[tool.hatch.build.targets.wheel.shared-data]
