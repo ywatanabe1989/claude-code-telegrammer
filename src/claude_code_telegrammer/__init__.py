@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pathlib
 
-__version__ = "0.2.0"
+from importlib.metadata import version as _get_version
+
+__version__ = _get_version(__name__)
 
 # Package directory (works for both editable and regular installs)
 _PKG_DIR = pathlib.Path(__file__).resolve().parent

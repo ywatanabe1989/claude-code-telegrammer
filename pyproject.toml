@@ -38,14 +38,6 @@ docs = [
     "sphinx-autodoc-typehints>=1.25",
 ]
 
-[project.scripts]
-telegrammer = "claude_code_telegrammer.cli:telegrammer"
-telegrammer-watchdog = "claude_code_telegrammer.cli:telegrammer_watchdog"
-telegrammer-guard = "claude_code_telegrammer.cli:telegrammer_guard"
-telegrammer-init = "claude_code_telegrammer.cli:telegrammer_init"
-telegrammer-relay = "claude_code_telegrammer.cli:telegrammer_relay"
-telegrammer-hook = "claude_code_telegrammer.cli:telegrammer_hook"
-
 [project.urls]
 Homepage = "https://github.com/ywatanabe1989/claude-code-telegrammer"
 Repository = "https://github.com/ywatanabe1989/claude-code-telegrammer.git"
@@ -55,10 +47,3 @@ Issues = "https://github.com/ywatanabe1989/claude-code-telegrammer/issues"
 packages = ["src/claude_code_telegrammer"]
 
 [tool.hatch.build.targets.wheel.shared-data]
-
-[tool.hatch.build]
-# Force inclusion of symlinked directories
-artifacts = [
-    "src/claude_code_telegrammer/bin/*",
-    "src/claude_code_telegrammer/lib/*",
-]

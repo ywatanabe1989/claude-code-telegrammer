@@ -1,7 +1,7 @@
 ---
 name: claude-code-telegrammer
 description: TUI watchdog for Claude Code — screen polling, auto-response, lock management. Bottom layer of the SciTeX agent stack.
-version: 0.2.0
+version: 0.3.0
 ---
 
 # claude-code-telegrammer
@@ -33,17 +33,17 @@ claude-code-telegrammer  ◀── YOU ARE HERE
 | Binary | Purpose |
 |--------|---------|
 | telegrammer | Main CLI orchestrator |
-| telegrammer-watchdog | Screen-based auto-responder |
-| telegrammer-guard | Lock file manager |
-| telegrammer-init | Session initializer |
-| telegrammer-relay | Orochi relay |
+| claude-code-telegrammer-watchdog | Screen-based auto-responder |
+| claude-code-telegrammer-guard | Lock file manager |
+| claude-code-telegrammer-init | Session initializer |
+| claude-code-telegrammer-relay | Orochi relay |
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| TELEGRAMMER_SESSION | cld-telegram | Screen session name |
-| TELEGRAMMER_WATCHDOG_INTERVAL | 1.5 | Poll interval (seconds) |
-| TELEGRAMMER_RESP_Y_N | 1 | Response to y/n prompt |
-| TELEGRAMMER_RESP_Y_Y_N | 2 | Response to y/y/n prompt |
-| TELEGRAMMER_RESP_WAITING | /speak-and-call | Command when idle |
+| CLAUDE_CODE_TELEGRAMMER_SESSION | claude-code-telegrammer | Screen session name |
+| CLAUDE_CODE_TELEGRAMMER_WATCHDOG_INTERVAL | 1.5 | Poll interval (seconds) |
+| CLAUDE_CODE_TELEGRAMMER_RESP_Y_N | 1 | Response to y/n prompt |
+| CLAUDE_CODE_TELEGRAMMER_RESP_Y_Y_N | 2 | Response to y/y/n prompt |
+| CLAUDE_CODE_TELEGRAMMER_RESP_WAITING | /speak-and-call | Command when idle |

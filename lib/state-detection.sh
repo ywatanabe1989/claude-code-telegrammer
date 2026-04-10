@@ -1,6 +1,6 @@
 #!/bin/bash
 # state-detection.sh — Pattern matching for Claude Code TUI states
-# Sourced by telegrammer-watchdog; also runnable standalone with --self-test
+# Sourced by claude-code-telegrammer-watchdog; also runnable standalone with --self-test
 set -euo pipefail
 
 # Detect the current state of Claude Code from captured screen text.

@@ -24,3 +24,15 @@ jobs:
           pip install -e .
       - name: Run shell tests
         run: bash tests/test-state-detection.sh
+
+  test-ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install
+        working-directory: ts
+      - name: Run TypeScript tests
+        run: bun test
+        working-directory: ts
