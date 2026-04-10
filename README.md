@@ -177,7 +177,7 @@ claude \
     --dangerously-load-development-channels server:claude-code-telegrammer
 ```
 
-For full agent orchestration (screen sessions, watchdog, YAML configs), see [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container).
+You should see `Listening for channel messages from: server:claude-code-telegrammer` in the Claude Code TUI. Send a message from Telegram to your bot — Claude Code will receive it as a channel notification.
 
 ## Interfaces
 
