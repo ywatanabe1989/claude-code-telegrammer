@@ -29,23 +29,63 @@
 
 ---
 
-## Problem
+## Problem and Solution
 
-The official `plugin:telegram@claude-plugins-official` has several unresolved issues that make it unusable for production autonomous agents:
+<table>
+<tr>
+  <th align="center">#</th>
+  <th>Problem</th>
+  <th>Solution</th>
+</tr>
+<tr valign="top">
+  <td align="center">1</td>
+  <td><h4>Hardcoded paths</h4>The official plugin hardcodes <code>~/.claude/</code> as its state directory (<a href="https://github.com/anthropics/claude-code/issues/851">#851</a>), making it impossible to run multiple bots or customize where access.json lives.</td>
+  <td><h4>Configurable state directory</h4>All state (DB, lock, access config) lives under <code>CLAUDE_CODE_TELEGRAMMER_TELEGRAM_STATE_DIR</code>. Run as many bots as you want, each with its own isolated state.</td>
+</tr>
+<tr valign="top">
+  <td align="center">2</td>
+  <td><h4>409 Conflict crashes</h4>No single-instance guard — multiple sessions polling the same bot get 409 errors and crash each other (<a href="https://github.com/anthropics/claude-code/issues/1075">#1075</a>).</td>
+  <td><h4>PID-based lock</h4>Automatic single-instance enforcement via PID lock file. Second instance detects the conflict and waits instead of crashing.</td>
+</tr>
+<tr valign="top">
+  <td align="center">3</td>
+  <td><h4>Zombie CPU consumption</h4>After session ends, the plugin process lingers at 100% CPU — requires manual kill (<a href="https://github.com/anthropics/claude-code/issues/1146">#1146</a>).</td>
+  <td><h4>Clean shutdown</h4>Exits gracefully on stdin close, SIGTERM, or SIGINT. No zombies, no manual cleanup.</td>
+</tr>
+<tr valign="top">
+  <td align="center">4</td>
+  <td><h4>Only 3 basic tools</h4>The official plugin provides just send, get_updates, and set_reaction — no history, no search, no file handling, no message editing.</td>
+  <td><h4>10 MCP tools</h4>reply, react, edit_message, get_history, get_unread, mark_read, download_attachment, send_document, search_messages, get_context — everything an autonomous agent needs.</td>
+</tr>
+<tr valign="top">
+  <td align="center">5</td>
+  <td><h4>No message persistence</h4>Messages vanish after delivery. No way to search past conversations, track read status, or build context from history.</td>
+  <td><h4>SQLite message store</h4>All messages persisted in WAL-mode SQLite with full-text search, reply threading (reply_to_message_id), read/replied tracking, and attachment metadata.</td>
+</tr>
+<tr valign="top">
+  <td align="center">6</td>
+  <td><h4>No access control for groups</h4>Basic allowlist only — no per-group policies, no hot-reload when config changes.</td>
+  <td><h4>DM + group policies</h4>Allowlist-based access control with separate DM and group chat policies via <code>access.json</code>, hot-reloaded on file change (mtime-based).</td>
+</tr>
+<tr valign="top">
+  <td align="center">7</td>
+  <td><h4>No attachment support</h4>Cannot download inbound files or upload documents to chats.</td>
+  <td><h4>Full attachment handling</h4>Inbound photos, documents, voice, audio, and video are auto-downloaded. Upload local files via <code>send_document</code> tool.</td>
+</tr>
+<tr valign="top">
+  <td align="center">8</td>
+  <td><h4>Sessions stall unattended</h4>Claude Code halts at permission prompts or idle states with no way to recover — the agent just stops working.</td>
+  <td><h4>TUI Watchdog</h4>Polls GNU Screen buffer, detects TUI state via pattern matching, sends keystrokes to auto-accept prompts and re-engage on idle. Throttled with burst limits.</td>
+</tr>
+</table>
 
-- **[#851](https://github.com/anthropics/claude-code/issues/851)** -- `STATE_DIR` not respected; access.json path hardcoded
-- **[#1075](https://github.com/anthropics/claude-code/issues/1075)** -- 409 Conflict errors when multiple instances poll the same bot
-- **[#1146](https://github.com/anthropics/claude-code/issues/1146)** -- Zombie CPU consumption after session ends
+<p align="center"><sub><b>Table 1.</b> Eight issues with the official Telegram plugin (as of April 2026) and how claude-code-telegrammer addresses each. These problems make the official plugin unusable for production autonomous agents.</sub></p>
 
-Additionally, Claude Code sessions running unattended will stall at permission prompts or idle states with no way to recover.
+### Architecture
 
-## Solution
+1. **Custom Telegram MCP Server** (`ts/`) -- Self-contained Bun + MCP server. 10 tools, SQLite persistence, allowlist access control, attachment handling, reaction support. Incoming messages acknowledged with 📩. Built-in responsiveness policy directs the agent to reply immediately and delegate heavy work to background subagents.
 
-Two subsystems that replace and extend the official plugin:
-
-1. **Custom Telegram MCP Server** (`ts/`) -- A self-contained MCP server that fixes all three official plugin issues: configurable state directory via `CLAUDE_CODE_TELEGRAMMER_TELEGRAM_STATE_DIR`, PID-based single-instance lock, and clean shutdown on stdin close/SIGTERM. Provides 10 MCP tools (vs 3 in the official plugin), SQLite message persistence, allowlist-based access control, and inbound reaction (`message_reaction`) delivery. Incoming messages are acknowledged with a 📩 reaction.
-
-2. **TUI Watchdog** (`lib/`) -- Polls a GNU Screen session, detects Claude Code's TUI state via pattern matching, and sends keystrokes to keep the agent running unattended (auto-accepts permission prompts, re-engages on idle). Throttled with burst limits to prevent runaway responses. Orchestration and lifecycle management is handled by [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container).
+2. **TUI Watchdog** (`lib/`) -- Polls a GNU Screen session, detects Claude Code's TUI state via pattern matching, and sends keystrokes to keep the agent running unattended (auto-accepts permission prompts, re-engages on idle). Throttled with burst limits to prevent runaway responses. Orchestration handled by [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container).
 
 <details>
 <summary><strong>MCP Tools (10)</strong></summary>
