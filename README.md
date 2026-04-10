@@ -117,24 +117,14 @@ This MCP server **must be the sole consumer** of its configured Telegram bot tok
 
 ### Prerequisites
 
-- Python >= 3.10 and GNU Screen (for watchdog/CLI)
 - [Bun](https://bun.sh/) >= 1.0 (for the MCP server)
+- GNU Screen (for watchdog, optional)
 
 ### Install
 
 ```bash
-pip install claude-code-telegrammer
-```
-
-Or from source:
-
-```bash
 git clone https://github.com/ywatanabe1989/claude-code-telegrammer.git
-cd claude-code-telegrammer
-pip install -e .
-
-# Install TypeScript dependencies for the MCP server
-cd ts && bun install
+cd claude-code-telegrammer/ts && bun install
 ```
 
 ## Quickstart
