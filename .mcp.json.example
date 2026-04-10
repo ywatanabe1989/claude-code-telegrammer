@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "claude-code-telegrammer": {
+      "type": "stdio",
+      "command": "bun",
+      "args": ["run", "/path/to/claude-code-telegrammer/ts/telegram-server.ts"],
+      "env": {
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN": "123456789:AAH...",
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS": "YOUR_TELEGRAM_USER_ID",
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_STATE_DIR": "~/.claude-code-telegrammer"
+      }
+    }
+  }
+}
