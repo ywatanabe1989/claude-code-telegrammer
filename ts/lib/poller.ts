@@ -56,9 +56,12 @@ export async function startPolling(mcp: Server): Promise<void> {
     log("poller", `getMe failed: ${err}`);
   }
 
-  // Preflight: try a non-blocking getUpdates to detect competing consumers
+  // Preflight: try a short long-poll to detect competing consumers.
+  // timeout=0 is instant and won't collide — we need timeout>0 to trigger
+  // the 409 if another consumer is already in a long-poll.
+  log("poller", "preflight: testing for competing consumers (3s)...");
   try {
-    await tgApi("getUpdates", { offset: updateOffset, timeout: 0, limit: 1 });
+    await tgApi("getUpdates", { offset: updateOffset, timeout: 3, limit: 1 });
     log("poller", "preflight OK — no competing consumers detected");
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
