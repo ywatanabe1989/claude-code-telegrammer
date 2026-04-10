@@ -1,4 +1,5 @@
 {
+  "_comment": "This MCP server uses getUpdates long-polling. For webhook mode, use scitex-orochi: https://github.com/ywatanabe1989/scitex-orochi",
   "mcpServers": {
     "claude-code-telegrammer": {
       "type": "stdio",
