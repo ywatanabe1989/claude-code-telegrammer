@@ -31,21 +31,40 @@
 
 ## Problem
 
-The official `plugin:telegram@claude-plugins-official` has several unresolved issues that make it unusable for production autonomous agents:
+The official `plugin:telegram@claude-plugins-official` is **unusable for production autonomous agents**:
 
-- **[#851](https://github.com/anthropics/claude-code/issues/851)** -- `STATE_DIR` not respected; access.json path hardcoded
-- **[#1075](https://github.com/anthropics/claude-code/issues/1075)** -- 409 Conflict errors when multiple instances poll the same bot
-- **[#1146](https://github.com/anthropics/claude-code/issues/1146)** -- Zombie CPU consumption after session ends
+| Issue | Impact |
+|-------|--------|
+| **[#851](https://github.com/anthropics/claude-code/issues/851)** Hardcoded paths | Cannot run multiple bots or customize state directory |
+| **[#1075](https://github.com/anthropics/claude-code/issues/1075)** 409 Conflict | Multiple instances crash each other — no single-instance guard |
+| **[#1146](https://github.com/anthropics/claude-code/issues/1146)** Zombie processes | CPU pegged at 100% after session ends — requires manual kill |
 
-Additionally, Claude Code sessions running unattended will stall at permission prompts or idle states with no way to recover.
+Beyond these bugs, the official plugin only provides **3 basic tools** (send, get_updates, set_reaction), has **no message persistence**, and **no access control** for group chats.
+
+On top of that, Claude Code sessions running unattended will **stall indefinitely** at permission prompts or idle states with no way to recover.
 
 ## Solution
 
-Two subsystems that replace and extend the official plugin:
+A complete replacement that turns Claude Code into a **production-ready Telegram agent**:
 
-1. **Custom Telegram MCP Server** (`ts/`) -- A self-contained MCP server that fixes all three official plugin issues: configurable state directory via `CLAUDE_CODE_TELEGRAMMER_TELEGRAM_STATE_DIR`, PID-based single-instance lock, and clean shutdown on stdin close/SIGTERM. Provides 10 MCP tools (vs 3 in the official plugin), SQLite message persistence, allowlist-based access control, and inbound reaction (`message_reaction`) delivery. Incoming messages are acknowledged with a 📩 reaction.
+| | Official Plugin | claude-code-telegrammer |
+|---|---|---|
+| **MCP Tools** | 3 | **10** (reply, react, edit, history, search, context, attachments...) |
+| **Message Store** | None | **SQLite** with full-text search, threading, read/reply tracking |
+| **Access Control** | Basic allowlist | **DM + group policies**, hot-reload via mtime |
+| **Attachments** | None | **Auto-download** inbound, upload via tool |
+| **Reply Threading** | Not tracked | **reply_to_message_id** stored and forwarded |
+| **Reactions** | Send only | **Send and receive** — inbound reactions delivered as notifications |
+| **Multi-instance** | 409 crashes | **PID lock** prevents conflicts |
+| **Shutdown** | Zombie CPU | **Clean exit** on stdin close / SIGTERM |
+| **State Directory** | Hardcoded | **Configurable** via env var |
+| **Unattended Operation** | Stalls at prompts | **TUI Watchdog** auto-responds to keep agent alive |
 
-2. **TUI Watchdog** (`lib/`) -- Polls a GNU Screen session, detects Claude Code's TUI state via pattern matching, and sends keystrokes to keep the agent running unattended (auto-accepts permission prompts, re-engages on idle). Throttled with burst limits to prevent runaway responses. Orchestration and lifecycle management is handled by [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container).
+### Architecture
+
+1. **Custom Telegram MCP Server** (`ts/`) -- Self-contained Bun + MCP server. 10 tools, SQLite persistence, allowlist access control, attachment handling, reaction support. Incoming messages acknowledged with 📩. Built-in responsiveness policy directs the agent to reply immediately and delegate heavy work to background subagents.
+
+2. **TUI Watchdog** (`lib/`) -- Polls a GNU Screen session, detects Claude Code's TUI state via pattern matching, and sends keystrokes to keep the agent running unattended (auto-accepts permission prompts, re-engages on idle). Throttled with burst limits to prevent runaway responses. Orchestration handled by [scitex-agent-container](https://github.com/ywatanabe1989/scitex-agent-container).
 
 <details>
 <summary><strong>MCP Tools (10)</strong></summary>
