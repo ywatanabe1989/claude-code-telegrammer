@@ -125,6 +125,8 @@ This MCP server **must be the sole consumer** of its configured Telegram bot tok
 3. Use a separate bot token per component (recommended)
 4. Or disable the other consumer
 
+**Alternative: Webhook mode via scitex-orochi.** If you run [scitex-orochi](https://github.com/ywatanabe1989/scitex-orochi), it supports Telegram webhook mode (`POST /webhook/telegram/`) which eliminates polling conflicts entirely. Telegram pushes updates to a single HTTPS endpoint instead of competing pollers. See `SCITEX_OROCHI_TELEGRAM_WEBHOOK_URL` in the orochi documentation.
+
 ## Installation
 
 ### Prerequisites
