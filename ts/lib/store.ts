@@ -103,9 +103,9 @@ export function initStore(): void {
   // Cache prepared statements
   stmtInsertInbound = db.prepare(`
     INSERT OR IGNORE INTO messages
-      (direction, chat_id, message_id, user_id, username, text, telegram_ts, received_at, host, project, agent_id, bot_token_hash, raw_json)
+      (direction, chat_id, message_id, user_id, username, text, telegram_ts, received_at, reply_to_message_id, host, project, agent_id, bot_token_hash, raw_json)
     VALUES
-      ('inbound', ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
+      ('inbound', ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?)
   `);
 
   stmtInsertOutbound = db.prepare(`
@@ -177,6 +177,7 @@ export function saveInbound(msg: {
   username: string;
   text: string;
   telegram_ts: string;
+  reply_to_message_id?: string;
   host: string;
   project: string;
   agent_id: string;
@@ -191,6 +192,7 @@ export function saveInbound(msg: {
     msg.username,
     msg.text,
     msg.telegram_ts,
+    msg.reply_to_message_id ?? null,
     msg.host,
     msg.project,
     msg.agent_id,

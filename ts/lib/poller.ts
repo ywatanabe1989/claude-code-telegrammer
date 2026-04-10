@@ -4,7 +4,7 @@
 
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { tgApi } from "./telegram-api.js";
-import { isAllowed } from "./access.js";
+import { isAllowed, loadAccess } from "./access.js";
 import { log } from "./log.js";
 import { HOST_NAME, PROJECT, AGENT_ID, BOT_TOKEN_HASH } from "./config.js";
 import {
@@ -37,6 +37,18 @@ export async function startPolling(mcp: Server): Promise<void> {
     });
   }
 
+  // Check allowlist at startup — fail loud if empty
+  const access = loadAccess();
+  if (
+    access.allowFrom.length === 0 &&
+    Object.keys(access.groups).length === 0
+  ) {
+    log(
+      "poller",
+      "ERROR: allowlist is empty — all messages will be rejected. Set CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS or create access.json in CLAUDE_CODE_TELEGRAMMER_TELEGRAM_STATE_DIR",
+    );
+  }
+
   try {
     const me = await tgApi("getMe");
     log("poller", `polling as @${me.username}`);
@@ -49,7 +61,7 @@ export async function startPolling(mcp: Server): Promise<void> {
       const updates = await tgApi("getUpdates", {
         offset: updateOffset,
         timeout: 30,
-        allowed_updates: ["message"],
+        allowed_updates: ["message", "message_reaction"],
       });
       if (!Array.isArray(updates)) continue;
       for (const update of updates) {
@@ -83,7 +95,60 @@ export async function startPolling(mcp: Server): Promise<void> {
   }
 }
 
+async function handleReaction(mcp: Server, update: any): Promise<void> {
+  const reaction = update.message_reaction;
+  if (!reaction?.user || !reaction?.new_reaction) return;
+
+  const userId = String(reaction.user.id);
+  const chatId = String(reaction.chat.id);
+  const chatType = reaction.chat.type;
+
+  if (!isAllowed(userId, chatId, chatType)) {
+    log(
+      "poller",
+      `REJECTED: reaction from user ${userId} in chat ${chatId} — not in allowlist`,
+    );
+    return;
+  }
+
+  const emojis = reaction.new_reaction
+    .filter((r: any) => r.type === "emoji" && r.emoji)
+    .map((r: any) => r.emoji)
+    .join("");
+
+  if (!emojis) return;
+
+  const ts = new Date((reaction.date ?? 0) * 1000).toISOString();
+  const meta: Record<string, string> = {
+    chat_id: chatId,
+    message_id: String(reaction.message_id),
+    user_id: userId,
+    user: reaction.user.username ?? userId,
+    ts,
+    source: "telegram",
+    type: "reaction",
+  };
+
+  const text = `(reaction: ${emojis} on message ${reaction.message_id})`;
+  log("poller", `delivering reaction from ${userId} in ${chatId}`, { emojis });
+  mcp
+    .notification({
+      method: "notifications/claude/channel",
+      params: { content: text, meta },
+    })
+    .catch((err) => {
+      log("poller", "failed to deliver reaction to Claude", {
+        error: String(err),
+      });
+    });
+}
+
 async function handleUpdate(mcp: Server, update: any): Promise<void> {
+  if (update.message_reaction) {
+    await handleReaction(mcp, update);
+    return;
+  }
+
   const msg = update.message;
   if (!msg?.from) return;
 
@@ -91,7 +156,14 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
   const chatId = String(msg.chat.id);
   const chatType = msg.chat.type;
 
-  if (!isAllowed(userId, chatId, chatType)) return;
+  if (!isAllowed(userId, chatId, chatType)) {
+    log(
+      "poller",
+      `REJECTED: message from user ${userId} in chat ${chatId} (type=${chatType}) — not in allowlist. Set CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS or create access.json`,
+      { userId, chatId, chatType },
+    );
+    return;
+  }
 
   let text = msg.text ?? msg.caption ?? "";
   if (msg.photo) text = text || "(photo)";
@@ -107,6 +179,9 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
   if (!text) return;
 
   const ts = new Date((msg.date ?? 0) * 1000).toISOString();
+  const replyToMessageId = msg.reply_to_message
+    ? String(msg.reply_to_message.message_id)
+    : undefined;
 
   // Persist to SQLite before acking
   let rowId: number | null = null;
@@ -118,6 +193,7 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
       username: msg.from.username ?? userId,
       text,
       telegram_ts: ts,
+      reply_to_message_id: replyToMessageId,
       host: HOST_NAME,
       project: PROJECT,
       agent_id: AGENT_ID,
@@ -162,11 +238,11 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
     }
   }
 
-  // Ack: react with eyes only after SQLite insert succeeds
+  // Ack: react with "received" after SQLite insert succeeds
   tgApi("setMessageReaction", {
     chat_id: chatId,
     message_id: msg.message_id,
-    reaction: [{ type: "emoji", emoji: "\uD83D\uDC40" }],
+    reaction: [{ type: "emoji", emoji: "\uD83D\uDCE9" }],
   }).catch(() => {});
 
   // Fire-and-forget typing indicator
@@ -184,6 +260,9 @@ async function handleUpdate(mcp: Server, update: any): Promise<void> {
     ts,
     source: "telegram",
   };
+  if (replyToMessageId) {
+    meta.reply_to_message_id = replyToMessageId;
+  }
 
   // Add attachment metadata to channel notification
   for (const { kind, obj } of attachments) {
