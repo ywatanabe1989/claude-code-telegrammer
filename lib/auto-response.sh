@@ -1,6 +1,6 @@
 #!/bin/bash
 # auto-response.sh — Sends responses based on detected TUI state
-# Sourced by telegrammer-watchdog
+# Sourced by claude-code-telegrammer-watchdog
 set -euo pipefail
 
 # ── Configuration (overridable) ───────────────────────────────────────
