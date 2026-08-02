@@ -7,6 +7,35 @@ import { appendSignature } from "./signature.js";
 import { mkdirSync, readFileSync } from "fs";
 import { join, basename, extname } from "path";
 
+/**
+ * Wall-clock bound for the STARTUP token check.
+ *
+ * MEASURED 2026-08-03. `getMeRaw()` is awaited at telegram-server.ts:222,
+ * BEFORE `mcp.connect()` at :367 — so until Telegram answers, this MCP server
+ * has not announced its tool list. That fetch was unbounded, so when the
+ * network black-holes (packets dropped, no RST — an ordinary transient
+ * WSL2/NAT/DNS hiccup) it did not fail fast: it sat in the kernel's TCP SYN
+ * backoff. With tcp_syn_retries=6 that is 1+2+4+8+16+32+64 = 127s, measured at
+ * 133.7 / 133.6 / 135.1 s across three trials against a black-holed address.
+ *
+ * Claude Code's MCP startup timeout is BELOW that (30s default; 120s as
+ * configured on the fleet). So the client gave up ~14s before this server
+ * would have recovered on its own — and the recovery was real, because
+ * validateBotToken() treats a transport-level rejection as TRANSIENT and
+ * proceeds to connect anyway. The server never errored and never crashed; it
+ * was still inside this await when the client stopped waiting. The agent then
+ * had NO telegram tools and no way to know: an absent MCP tool is
+ * indistinguishable from an absent message, with no error to log.
+ *
+ * That is how scitex-hub silently lost the operator's inbound rail for hours
+ * on 2026-08-03 while every health signal read green.
+ *
+ * 5s is far above a healthy call (measured 254-258ms warm, 805ms cold DNS+TLS)
+ * and far below every MCP startup timeout, so a stall now lands in the
+ * transient branch instead of outliving the client's patience.
+ */
+const STARTUP_FETCH_TIMEOUT_MS = 5000;
+
 export async function tgApi(
   method: string,
   body?: Record<string, unknown>,
@@ -41,7 +70,17 @@ export async function getMeRaw(): Promise<{
   error_code?: number;
   description?: string;
 }> {
-  const res = await fetch(`${API_BASE}/getMe`, { method: "POST" });
+  const res = await fetch(`${API_BASE}/getMe`, {
+    method: "POST",
+    // BOUNDED on purpose -- see STARTUP_FETCH_TIMEOUT_MS. An AbortSignal
+    // rejection is a transport-level failure, which is exactly the case the
+    // docstring above says validateBotToken() classifies as TRANSIENT, so a
+    // stalled network now yields "could not check the token, carry on and
+    // connect" in ~5s instead of holding the MCP handshake past the client's
+    // timeout. No ordering changes: getMe still runs before acquireLock(), so
+    // a known-bad token still never takes the lock.
+    signal: AbortSignal.timeout(STARTUP_FETCH_TIMEOUT_MS),
+  });
   return (await res.json()) as {
     ok: boolean;
     result?: { id?: number; username?: string; [k: string]: unknown };
