@@ -302,10 +302,29 @@ registerTools(mcp);
 // ── Shutdown ────────────────────────────────────────────────────────────────
 
 let shuttingDown = false;
-function shutdown(): void {
+// WHY `trigger` IS A PARAMETER — measured 2026-08-06, reported by scitex-hub.
+// This function has FOUR call sites (stdin end/close, SIGTERM, SIGINT) and the
+// log line named none of them, so a shutdown left behind exactly one clue:
+// "shutting down". No error, no cause, no way to tell a deliberate stop from a
+// stray signal from a closed pipe.
+//
+// What that cost: the MCP server exited ~176ms after spawning its poller, 4ms
+// after the poller stamped its pidfile. The session got ZERO telegram tools,
+// so the agent could not reply to the operator on his own channel — he sent
+// four messages over ~40 minutes and got "connection refused" every time. The
+// poller stayed alive and kept RECORDING his messages, which is why the
+// outage looked like a reply failure rather than a crash.
+//
+// The leading hypothesis is that the poller's own takeover SIGTERMs this
+// process via a recycled pid (lib/takeover.ts) — but it is a HYPOTHESIS, and
+// it stays one precisely because this log cannot say whether a SIGTERM ever
+// arrived. Naming the trigger is what makes the next occurrence a one-line
+// read instead of a fresh investigation, and it is correct whether or not the
+// takeover theory holds. Ship the observability before the cause fix.
+function shutdown(trigger: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  log("server", "shutting down");
+  log("server", `shutting down (trigger=${trigger} pid=${process.pid})`);
   // Architecture fix (incident-cct-inbound-dies-silently-with-mcp-server-
   // 20260711): the poller is now a SEPARATE, standalone process
   // (ts/telegram-poller.ts, spawned by ensurePollerRunning() below) — it
@@ -318,10 +337,14 @@ function shutdown(): void {
   setTimeout(() => process.exit(0), 2000);
 }
 
-process.stdin.on("end", shutdown);
-process.stdin.on("close", shutdown);
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+// Each call site names itself. Passing `shutdown` directly would hand the
+// handler's own argument through as the trigger (the stdin events pass none;
+// the signal handlers pass the signal name), which is exactly the kind of
+// accidental-but-plausible value that makes a log lie rather than fail.
+process.stdin.on("end", () => shutdown("stdin-end"));
+process.stdin.on("close", () => shutdown("stdin-close"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
