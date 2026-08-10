@@ -22,7 +22,7 @@ import { validateBotToken } from "../lib/startup-validate.js";
 import { FAKE_TOKEN, healthyInputs, byName } from "./health-fixtures.js";
 
 describe("shared contract shape", () => {
-  test("healthy inputs → ok:true, all 13 checks present, passing hints null", () => {
+  test("healthy inputs → ok:true, all 14 checks present, passing hints null", () => {
     const report = buildHealthReport(healthyInputs());
     expect(report.package).toBe("claude-code-telegrammer");
     expect(report.ok).toBe(true);
@@ -33,6 +33,11 @@ describe("shared contract shape", () => {
       "bot_token_valid",
       "webhook_absent",
       "poller_alive",
+      // Sits right after poller_alive because it answers the question
+      // poller_alive does NOT: the process can be up while nothing arrives.
+      // A month of silent inbound outage lived in that gap — see
+      // lib/health-checks-ingestion.ts.
+      "ingestion_live",
       "allowlist_nonempty",
       "state_dir_writable",
       "db_schema_current",
@@ -54,7 +59,7 @@ describe("shared contract shape", () => {
     // default fixture (no TURN_URL) — still counted, still hint:null, still
     // "ok" in the summary (skipped is a legitimate healthy state here, same
     // as the tokenless-skip pattern elsewhere in this report).
-    expect(report.summary).toContain("13/13");
+    expect(report.summary).toContain("14/14");
   });
 
   test("every failing check carries a non-null hint (fail-loud, actionable)", () => {
@@ -129,11 +134,12 @@ describe("tokenless (telegram disabled by design)", () => {
     expect(c.hint).toContain("test-agent");
   });
 
-  test("bot_token_valid / webhook_absent / poller_alive / allowlist_nonempty are skipped-ok", () => {
+  test("bot_token_valid / webhook_absent / poller_alive / ingestion_live / allowlist_nonempty are skipped-ok", () => {
     for (const name of [
       "bot_token_valid",
       "webhook_absent",
       "poller_alive",
+      "ingestion_live",
       "allowlist_nonempty",
     ]) {
       const c = byName(report, name);

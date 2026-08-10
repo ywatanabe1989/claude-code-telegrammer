@@ -272,13 +272,21 @@ export function probeDb(dbPath: string = DB_PATH): DbProbe {
           "COUNT(*) AS n FROM messages WHERE direction = 'inbound' AND raw_json IS NOT NULL",
       )
       .get() as { max_id: number | null; n: number };
+    // The heartbeat recordSuccessfulPoll() persists. Read here so
+    // checkIngestionLive can separate "the poller process exists" from
+    // "messages are arriving" — the distinction a month of silence hid.
+    const poll = db
+      .prepare("SELECT value FROM meta WHERE key = 'last_poll_ts'")
+      .get() as { value: string } | undefined;
     const parsedOffset = off ? parseInt(off.value, 10) : NaN;
+    const parsedPoll = poll ? parseInt(poll.value, 10) : NaN;
     return {
       exists: true,
       schemaVersion: ver?.value ?? null,
       updateOffset: Number.isFinite(parsedOffset) ? parsedOffset : null,
       maxUpdateId: agg.max_id ?? null,
       inboundCount: agg.n,
+      lastPollTs: Number.isFinite(parsedPoll) ? parsedPoll : null,
     };
   } catch (err) {
     return {
