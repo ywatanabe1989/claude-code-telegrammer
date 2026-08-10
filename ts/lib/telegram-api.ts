@@ -36,6 +36,106 @@ import { join, basename, extname } from "path";
  */
 const STARTUP_FETCH_TIMEOUT_MS = 5000;
 
+/** The `ok:false` envelope Telegram returns on every API failure. */
+export interface TelegramErrorEnvelope {
+  ok: boolean;
+  error_code?: number;
+  description?: string;
+}
+
+/**
+ * A Telegram API failure that KEEPS its envelope.
+ *
+ * This used to be a bare `new Error("Telegram API <m> failed: <description>")`,
+ * which threw away `error_code` — and since Telegram always sends a
+ * description, the numeric code never appeared in the message either. Callers
+ * were left pattern-matching prose to recover a number the response had
+ * handed us and we dropped.
+ *
+ * That cost scitex-hub a month of inbound Telegram. The poll loop branched on
+ * `errMsg.includes("409")`; a real 409 arrives as
+ * `description: "Conflict: terminated by other getUpdates request…"` with no
+ * digits, so the conflict branch — including its operator alert — was
+ * unreachable in production while the log filled with 161 conflicts. See
+ * test/conflict-classification.test.ts for the measured outage.
+ *
+ * Every signal is now its own named, three-valued field: `errorCode` is the
+ * number, or `undefined` for "the envelope did not say" — never a stand-in
+ * value that some caller will mistake for a real code.
+ */
+export class TelegramApiError extends Error {
+  readonly method: string;
+  readonly errorCode?: number;
+  readonly description?: string;
+
+  constructor(
+    method: string,
+    errorCode: number | undefined,
+    description: string | undefined,
+    fallbackStatus?: number,
+  ) {
+    // The message keeps BOTH parts: the code that classification needs and
+    // the description a human reads. Any legacy substring reader now finds
+    // the number that used to be missing.
+    const code = errorCode ?? fallbackStatus;
+    const detail = description ?? (code !== undefined ? String(code) : "unknown error");
+    super(
+      `Telegram API ${method} failed` +
+        (code !== undefined ? ` (error_code ${code})` : "") +
+        `: ${detail}`,
+    );
+    this.name = "TelegramApiError";
+    this.method = method;
+    this.errorCode = errorCode;
+    this.description = description;
+  }
+
+  /** Build from a parsed `ok:false` response body. */
+  static fromEnvelope(
+    method: string,
+    envelope: TelegramErrorEnvelope,
+    fallbackStatus?: number,
+  ): TelegramApiError {
+    return new TelegramApiError(
+      method,
+      envelope.error_code,
+      envelope.description,
+      fallbackStatus,
+    );
+  }
+}
+
+/**
+ * Telegram's own conflict marker: the description ALWAYS opens with this
+ * literal when two consumers race one bot token. Anchored at the start so
+ * the ordinary English word "conflict" appearing in someone else's error
+ * (a git message, say) cannot impersonate it.
+ */
+const CONFLICT_PREFIX = /^Conflict:/;
+
+/**
+ * Is this failure "another consumer is already polling this bot token"?
+ *
+ * Structural first — `error_code === 409` is the fact Telegram states, and it
+ * survives any future rewording of the prose. The description check is only a
+ * fallback for paths that still flatten the envelope into a plain Error.
+ *
+ * Deliberately NOT a substring search for "409": the code lives in the
+ * envelope, and matching digits in free text is what broke this before.
+ */
+export function isConflictError(err: unknown): boolean {
+  if (err instanceof TelegramApiError) {
+    if (err.errorCode === 409) return true;
+    return err.description !== undefined && CONFLICT_PREFIX.test(err.description);
+  }
+  if (err instanceof Error) {
+    // A flattened message from an older build reads
+    // "Telegram API getUpdates failed: Conflict: terminated by …".
+    return /: Conflict: /.test(err.message);
+  }
+  return false;
+}
+
 export async function tgApi(
   method: string,
   body?: Record<string, unknown>,
@@ -47,9 +147,7 @@ export async function tgApi(
   });
   const json = (await res.json()) as any;
   if (!json.ok) {
-    throw new Error(
-      `Telegram API ${method} failed: ${json.description ?? res.status}`,
-    );
+    throw TelegramApiError.fromEnvelope(method, json, res.status);
   }
   return json.result;
 }
@@ -203,9 +301,9 @@ export async function sendDocument(
   });
   const json = (await res.json()) as any;
   if (!json.ok) {
-    throw new Error(
-      `Telegram API sendDocument failed: ${json.description ?? res.status}`,
-    );
+    // Same typed error as tgApi — this path builds its own multipart request
+    // but must not have its own error shape.
+    throw TelegramApiError.fromEnvelope("sendDocument", json, res.status);
   }
   return json.result.message_id;
 }

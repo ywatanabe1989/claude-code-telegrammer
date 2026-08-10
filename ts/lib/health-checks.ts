@@ -360,6 +360,18 @@ export function checkStateDirWritable(probe: StateDirProbe): CheckOutcome {
   };
 }
 
+/**
+ * Offset-gap thresholds. The gap is `meta.update_offset` minus the largest
+ * update_id among STORED INBOUND ROWS — a number that drifts upward on its
+ * own, because most Telegram update types never become a stored row.
+ *
+ * Below EXPLAINABLE: quiet. Between the two: ambiguous, and reported as such
+ * rather than as a fault. At or above POISONED: no real update volume
+ * explains it, so it is a fault.
+ */
+const EXPLAINABLE_OFFSET_GAP = 1000;
+const POISONED_OFFSET_GAP = 1_000_000;
+
 /** 9. db_schema_current — schema version matches + persisted offset plausible. */
 export function checkDbSchemaCurrent(probe: DbProbe): CheckOutcome {
   if (!probe.exists) {
@@ -378,10 +390,10 @@ export function checkDbSchemaCurrent(probe: DbProbe): CheckOutcome {
       entry: {
         name: "db_schema_current",
         ok: false,
-        detail: `could not read messages.db: ${probe.error}`,
+        detail: `could not read claude-code-telegrammer.db: ${probe.error}`,
         hint:
-          "check messages.db permissions in the state dir; if corrupt, move " +
-          "it aside while the poller is stopped and restart.",
+          "check claude-code-telegrammer.db permissions in the state dir; if " +
+          "corrupt, move it aside while the poller is stopped and restart.",
       },
       warn: false,
     };
@@ -393,42 +405,71 @@ export function checkDbSchemaCurrent(probe: DbProbe): CheckOutcome {
         ok: false,
         detail: `meta.schema_version=${probe.schemaVersion ?? "(missing)"} but this code writes ${SCHEMA_VERSION}`,
         hint:
-          "messages.db was written by a different code version — back " +
-          "messages.db up / move it aside while the poller is stopped, then " +
+          "claude-code-telegrammer.db was written by a different code version " +
+          "— back it up / move it aside while the poller is stopped, then " +
           "restart the bridge to recreate it at the current schema.",
       },
       warn: false,
     };
   }
-  // Poisoned/bogus persisted offset: this exact class caused a 10-day silent
-  // outage (card cct-python-cli-wrap-pip-installable) — the poller asked
-  // Telegram for updates after an offset far beyond anything real, so
-  // getUpdates returned [] forever while everything "looked" fine.
-  if (
-    probe.inboundCount > 0 &&
-    probe.maxUpdateId !== null &&
-    probe.updateOffset !== null &&
-    probe.updateOffset > probe.maxUpdateId + 1000
-  ) {
+  // ── The offset-vs-stored-rows gap ──────────────────────────────────────
+  //
+  // What this CAN see: meta.update_offset, and the largest update_id among
+  // STORED INBOUND MESSAGE ROWS. What it CANNOT see: every other update type
+  // Telegram counts — reactions, edits, chat-member changes, and anything
+  // from a non-allowlisted sender. All of those advance update_id and none
+  // becomes a row, so on a quiet-but-reacted-to chat the gap grows on its own.
+  //
+  // So a moderate gap is genuinely AMBIGUOUS: it is what a poisoned offset
+  // looks like AND what an ordinary month of reactions looks like. Measured
+  // 2026-08-11 on scitex-hub: gap 1355, reported "implausible", ingestion
+  // demonstrably live. Reporting that as a failure cried wolf on a healthy
+  // rail — and the old hint ("DELETE the update_offset row") would have made
+  // getUpdates re-fetch Telegram's 24h backlog and re-deliver messages the
+  // operator had already read. A check must not answer "unknown" with
+  // "broken", and must never open with a destructive step.
+  //
+  // A gap of MILLIONS is different in kind: no volume of reactions explains
+  // it, so the 10-day-outage class (card cct-python-cli-wrap-pip-installable
+  // — the poller asked for updates beyond anything real and getUpdates
+  // returned [] forever) still fails hard, which is what this check is for.
+  const gap =
+    probe.updateOffset !== null && probe.maxUpdateId !== null
+      ? probe.updateOffset - probe.maxUpdateId
+      : null;
+
+  if (probe.inboundCount > 0 && gap !== null && gap >= POISONED_OFFSET_GAP) {
     return {
       entry: {
         name: "db_schema_current",
         ok: false,
         detail:
-          `meta.update_offset=${probe.updateOffset} is implausible — the largest ` +
-          `stored update_id is ${probe.maxUpdateId} (${probe.inboundCount} inbound rows)`,
+          `meta.update_offset=${probe.updateOffset} is ${gap} beyond the largest ` +
+          `stored update_id (${probe.maxUpdateId}, ${probe.inboundCount} inbound rows) — ` +
+          "too far for any real update volume to explain",
         hint:
-          "poisoned/bogus persisted offset — delete the meta update_offset " +
-          "row while the poller is stopped: sqlite3 <state-dir>/messages.db " +
-          "\"DELETE FROM meta WHERE key='update_offset'\"",
+          "likely a poisoned persisted offset (getUpdates will return [] " +
+          "forever). FIRST confirm inbound is actually dead — send yourself a " +
+          "message and check whether a new row lands, and read the poller log " +
+          "for Conflict errors, which cause the same silence for a different " +
+          "reason. ONLY if inbound is confirmed dead, and while the poller " +
+          "is stopped, reset the cursor with\n" +
+          "  sqlite3 <state-dir>/claude-code-telegrammer.db \"DELETE FROM meta WHERE key='update_offset'\"\n" +
+          "and expect it to re-deliver up to 24h of Telegram's backlog (you " +
+          "will see already-read messages arrive again).",
       },
       warn: false,
     };
   }
+
   const offsetNote =
     probe.updateOffset === null
       ? "update_offset unset"
-      : `update_offset=${probe.updateOffset} plausible`;
+      : gap !== null && gap > EXPLAINABLE_OFFSET_GAP
+        ? `update_offset=${probe.updateOffset}, ${gap} beyond the newest stored ` +
+          "message — normal for a chat with reactions/edits (they advance " +
+          "Telegram's counter without storing a row), so not diagnostic either way"
+        : `update_offset=${probe.updateOffset} plausible`;
   return {
     entry: {
       name: "db_schema_current",
