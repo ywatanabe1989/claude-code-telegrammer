@@ -247,7 +247,7 @@ describe("db_schema_current", () => {
     expect(c.detail).toContain("plausible");
   });
 
-  test("unreadable DB → fail with a permissions hint", () => {
+  test("unreadable DB → fail with a permissions hint naming the REAL file", () => {
     const c = byName(
       buildHealthReport(
         healthyInputs({ db: { exists: true, error: "SQLITE_CANTOPEN" } }),
@@ -255,7 +255,95 @@ describe("db_schema_current", () => {
       "db_schema_current",
     );
     expect(c.ok).toBe(false);
-    expect(c.hint).toContain("messages.db");
+    // The store was renamed to claude-code-telegrammer.db; `messages.db` is
+    // the LEGACY name and now exists only in abandoned pre-migration dirs.
+    // A hint that names it sends the operator to edit a dead file.
+    expect(c.hint).toContain("claude-code-telegrammer.db");
+    expect(c.hint).not.toContain("messages.db");
+  });
+
+  // ── The 2026-08-11 false alarm ──────────────────────────────────────────
+  //
+  // MEASURED on scitex-hub's live store: update_offset=104702033 while the
+  // newest STORED inbound update_id was 104700678 — a gap of 1355. This check
+  // called that "implausible" and told the operator to DELETE the offset.
+  // Both halves were wrong:
+  //
+  //   - The gap is ordinary. Reactions, edits, chat-member updates and
+  //     messages from non-allowlisted senders all advance Telegram's
+  //     update_id and never become a stored message row, so the comparand
+  //     drifts on any chat that is quiet but reacted-to. The poller log
+  //     proved ingestion was LIVE at that very offset (two reactions
+  //     delivered the evening before).
+  //   - Deleting the offset makes getUpdates re-fetch Telegram's 24h backlog,
+  //     RE-DELIVERING already-seen messages into the operator's session.
+  //
+  // A check that cannot separate healthy from broken must not report broken,
+  // and must never hand out a destructive first step. The genuinely poisoned
+  // case (an offset no plausible update volume explains) still fails hard.
+  test("REGRESSION: a quiet, reacted-to chat is not reported broken", () => {
+    const report = buildHealthReport(
+      healthyInputs({
+        db: {
+          exists: true,
+          schemaVersion: SCHEMA_VERSION,
+          updateOffset: 104702033,
+          maxUpdateId: 104700678,
+          inboundCount: 124,
+        },
+      }),
+    );
+    const c = byName(report, "db_schema_current");
+
+    expect(c.ok).toBe(true); // <- was false: the false alarm
+    expect(report.ok).toBe(true); // and it must not redden the whole report
+    expect(c.detail).toContain("1355"); // still SHOWS the gap, honestly
+    expect(c.hint).toBeNull(); // nothing to act on
+  });
+
+  test("REGRESSION: the destructive delete-the-offset hint is gone", () => {
+    // Even in the hard-fail branch the first step must not be data loss.
+    const c = byName(
+      buildHealthReport(
+        healthyInputs({
+          db: {
+            exists: true,
+            schemaVersion: SCHEMA_VERSION,
+            updateOffset: 999999999,
+            maxUpdateId: 5000,
+            inboundCount: 42,
+          },
+        }),
+      ),
+      "db_schema_current",
+    );
+    expect(c.ok).toBe(false);
+    // It must say to CONFIRM the rail is actually dead first…
+    expect(c.hint).toContain("confirm");
+    // …warn that resetting re-delivers Telegram's backlog…
+    expect(c.hint).toContain("re-deliver");
+    // …and name the file that actually exists.
+    expect(c.hint).not.toContain("messages.db");
+  });
+
+  test("a gap no update volume explains still fails (10-day-outage class)", () => {
+    // The detection this check exists for must survive the fix.
+    const c = byName(
+      buildHealthReport(
+        healthyInputs({
+          db: {
+            exists: true,
+            schemaVersion: SCHEMA_VERSION,
+            updateOffset: 104700678 + 5_000_000,
+            maxUpdateId: 104700678,
+            inboundCount: 124,
+          },
+        }),
+      ),
+      "db_schema_current",
+    );
+    expect(c.ok).toBe(false);
+    expect(c.detail).toContain("update_offset");
   });
 });
 

@@ -46,6 +46,7 @@ import {
   checkBotTokenValid,
   checkWebhookAbsent,
   checkPollerAlive,
+  // (checkIngestionLive lives in its own module — see the import below.)
   checkAllowlistNonempty,
   checkStateDirWritable,
   checkDbSchemaCurrent,
@@ -60,11 +61,13 @@ import {
   checkCodeCurrent,
   type CodeCurrencyProbe,
 } from "./health-checks-code.js";
+import { checkIngestionLive } from "./health-checks-ingestion.js";
 
 // Re-export the builders + skip marker so callers/tests have one import surface.
 export * from "./health-checks.js";
 export * from "./health-checks-wake.js";
 export * from "./health-checks-code.js";
+export * from "./health-checks-ingestion.js";
 
 // ── Report shape (shared contract) ──────────────────────────────────────────
 
@@ -138,6 +141,16 @@ export type DbProbe =
        *  inbound rows carry one. */
       maxUpdateId: number | null;
       inboundCount: number;
+      /**
+       * meta.last_poll_ts — epoch-ms of the last SUCCESSFUL getUpdates
+       * (recordSuccessfulPoll persists it). null ⇔ never stamped.
+       *
+       * This is the number that separates "the poller process exists" from
+       * "inbound is actually flowing"; see checkIngestionLive. Optional so
+       * existing callers/fixtures stay valid — absent ⇔ the check skips
+       * rather than failing the report.
+       */
+      lastPollTs?: number | null;
     };
 
 /**
@@ -184,6 +197,11 @@ export interface HealthInputs {
    * rather than failing the report.
    */
   codeCurrency?: CodeCurrencyProbe;
+  /**
+   * Epoch-ms clock, injectable so ingestion_live is unit-testable without
+   * timers. Absent ⇔ Date.now().
+   */
+  now?: number;
 }
 
 // ── Report assembly ─────────────────────────────────────────────────────────
@@ -200,6 +218,10 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
     checkBotTokenValid(inputs.tokenCheck),
     checkWebhookAbsent(inputs.webhook),
     checkPollerAlive(inputs.poller),
+    // Right after poller_alive on purpose: "the process exists" and "messages
+    // are arriving" are different questions, and a month of silence lived in
+    // the gap between them. See health-checks-ingestion.ts.
+    checkIngestionLive(inputs.db, inputs.poller, inputs.now ?? Date.now()),
     checkAllowlistNonempty(inputs.access),
     checkStateDirWritable(inputs.stateDirProbe),
     checkDbSchemaCurrent(inputs.db),
