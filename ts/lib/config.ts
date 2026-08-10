@@ -173,11 +173,14 @@ export function findRenamedEnv(
 //                            design fires 👀 then ✅ in sequence so it stays
 //                            forward-compatible if sac later splits the
 //                            signals (enqueue-ack vs completed-turn).
-//   Stage 4  ❌ failed     — failure (agent down / 401 / connection refused /
+//   Stage 4  👎 failed     — failure (agent down / 401 / connection refused /
 //                            timeout / non-2xx). Final visible state until
 //                            the operator retries.
 //
-// All four emojis are on Telegram's fixed reaction whitelist.
+// Every stage emoji MUST be in TELEGRAM_ALLOWED_REACTIONS below, and that is
+// now CHECKED rather than asserted — see the note there. This comment used to
+// read "All four emojis are on Telegram's fixed reaction whitelist"; two of
+// them were not, and the claim outlived the truth because nothing tested it.
 //
 // Enabled by default. Set CLAUDE_CODE_TELEGRAMMER_READ_RECEIPTS to
 // any of 0/false/no/off (case-insensitive) to disable without a code change.
@@ -188,10 +191,55 @@ export const READ_RECEIPTS_ENABLED: boolean = ![
   "off",
 ].includes((getenv("READ_RECEIPTS") ?? "").trim().toLowerCase());
 
+// Telegram's FIXED reaction allowlist for setMessageReaction. Anything not
+// in here comes back `Bad Request: REACTION_INVALID` — always, not
+// intermittently, so an emoji outside this set can never succeed.
+//
+// Measured 2026-08-10: RECEIPT_DONE was "✅" and RECEIPT_FAILED was "❌".
+// NEITHER is on this list. Every inbound operator message logged
+// "failed to set done receipt (✅) ... REACTION_INVALID" — 12 of 12 that
+// day, 100%, while the message itself was delivered and read fine.
+//
+// So the operator saw NO acknowledgment on anything he sent, and worse, a
+// FAILED turn was equally invisible: stage 4 could not render either. He
+// has previously raised "agents are ignoring me" as an incident; a receipt
+// that cannot be drawn is exactly what produces that impression.
+//
+// The failure was silent by construction: logged at WARNING in a per-agent
+// file nobody tails, on a delivery path that otherwise succeeded, so every
+// health check stayed green.
+export const TELEGRAM_ALLOWED_REACTIONS: readonly string[] = [
+  "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢",
+  "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳",
+  "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾",
+  "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👀", "🎃", "🙈", "😇", "😨",
+  "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘",
+  "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷", "😡",
+] as const;
+
 export const RECEIPT_DELIVERED_EMOJI = "⚡"; // stage 1
 export const RECEIPT_READ_EMOJI = "👀"; // stage 2 (a.k.a. "received")
-export const RECEIPT_DONE_EMOJI = "✅"; // stage 3 (turn completed)
-export const RECEIPT_FAILED_EMOJI = "❌"; // stage 4 (failure)
+export const RECEIPT_DONE_EMOJI = "👍"; // stage 3 (turn completed)
+export const RECEIPT_FAILED_EMOJI = "👎"; // stage 4 (failure)
+
+// Fail at STARTUP, not once per message forever. A receipt emoji that
+// Telegram rejects is a configuration error, and the old code discovered it
+// on every single inbound message and then carried on.
+for (const [name, emoji] of [
+  ["RECEIPT_DELIVERED_EMOJI", RECEIPT_DELIVERED_EMOJI],
+  ["RECEIPT_READ_EMOJI", RECEIPT_READ_EMOJI],
+  ["RECEIPT_DONE_EMOJI", RECEIPT_DONE_EMOJI],
+  ["RECEIPT_FAILED_EMOJI", RECEIPT_FAILED_EMOJI],
+] as const) {
+  if (!TELEGRAM_ALLOWED_REACTIONS.includes(emoji)) {
+    throw new Error(
+      `${name}=${emoji} is not on Telegram's setMessageReaction allowlist, ` +
+        `so every receipt at this stage would fail with REACTION_INVALID ` +
+        `while the message itself delivered fine — an invisible break. ` +
+        `Pick one of: ${TELEGRAM_ALLOWED_REACTIONS.join(" ")}`,
+    );
+  }
+}
 
 // ── Loud-fail outbound reply (#14, 2026-06-07) ──────────────────────────────
 //
