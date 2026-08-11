@@ -62,12 +62,14 @@ import {
   type CodeCurrencyProbe,
 } from "./health-checks-code.js";
 import { checkIngestionLive } from "./health-checks-ingestion.js";
+import { checkInboundRecency } from "./health-checks-inbound-recency.js";
 
 // Re-export the builders + skip marker so callers/tests have one import surface.
 export * from "./health-checks.js";
 export * from "./health-checks-wake.js";
 export * from "./health-checks-code.js";
 export * from "./health-checks-ingestion.js";
+export * from "./health-checks-inbound-recency.js";
 
 // ── Report shape (shared contract) ──────────────────────────────────────────
 
@@ -151,6 +153,16 @@ export type DbProbe =
        * rather than failing the report.
        */
       lastPollTs?: number | null;
+      /**
+       * Epoch-ms of the newest STORED inbound row (MAX(received_at)).
+       *
+       * last_poll_ts says polling works; this says something ARRIVED. A poll
+       * that succeeds with zero updates is identical to a healthy quiet
+       * channel, so ingestion_live cannot separate the two — see
+       * checkInboundRecency. Optional so existing callers/fixtures stay
+       * valid. Absent ⇔ nobody asked; null ⇔ asked and no inbound row exists.
+       */
+      newestInboundMs?: number | null;
     };
 
 /**
@@ -222,6 +234,12 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
     // are arriving" are different questions, and a month of silence lived in
     // the gap between them. See health-checks-ingestion.ts.
     checkIngestionLive(inputs.db, inputs.poller, inputs.now ?? Date.now()),
+    // Directly after ingestion_live, because it is the NEXT question and the
+    // one ingestion_live cannot answer: polls succeeding and messages
+    // arriving are different facts, and a successful poll returning zero
+    // updates looks identical to a healthy quiet channel. See
+    // health-checks-inbound-recency.ts.
+    checkInboundRecency(inputs.db, inputs.poller, inputs.now ?? Date.now()),
     checkAllowlistNonempty(inputs.access),
     checkStateDirWritable(inputs.stateDirProbe),
     checkDbSchemaCurrent(inputs.db),
