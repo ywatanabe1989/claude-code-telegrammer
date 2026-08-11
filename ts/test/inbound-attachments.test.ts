@@ -150,6 +150,16 @@ describe("inbound photo content line carries kind + file_id", () => {
   });
 });
 
+/**
+ * get_history / get_unread answer {coverage, count, messages} rather than a
+ * bare array — a bare [] could not distinguish "nothing was sent" from "this
+ * store never observed that window" (incident 2026-08-10). Tests read the
+ * messages through here so the envelope is asserted in exactly one place.
+ */
+function parseMessages(res: { content: Array<{ text: string }> }): Array<any> {
+  return JSON.parse(res.content[0].text).messages as Array<any>;
+}
+
 describe("get_history / get_unread expose the attachments array", () => {
   test("history row carries attachments with local_path after download-complete", () => {
     const rowId = savePhotoMessage(9010, "FID_HISTORY");
@@ -160,7 +170,7 @@ describe("get_history / get_unread expose the attachments array", () => {
 
     const res = handleGetHistory({ chat_id: CHAT, limit: 50 });
     expect(res.isError).toBeUndefined();
-    const rows = JSON.parse(res.content[0].text) as Array<any>;
+    const rows = parseMessages(res);
     const row = rows.find((r) => r.id === rowId);
     expect(row).toBeDefined();
     expect(row.attachments).toHaveLength(1);
@@ -177,7 +187,7 @@ describe("get_history / get_unread expose the attachments array", () => {
   test("plain-text rows carry NO attachments key (no empty-array noise)", () => {
     const rowId = saveTextMessage(9011, "just words");
     const res = handleGetHistory({ chat_id: CHAT, limit: 50 });
-    const rows = JSON.parse(res.content[0].text) as Array<any>;
+    const rows = parseMessages(res);
     const row = rows.find((r) => r.id === rowId);
     expect(row).toBeDefined();
     expect("attachments" in row).toBe(false);
@@ -186,11 +196,23 @@ describe("get_history / get_unread expose the attachments array", () => {
   test("get_unread includes the same attachments array", () => {
     const rowId = savePhotoMessage(9012, "FID_UNREAD");
     const res = handleGetUnread({ chat_id: CHAT });
-    const rows = JSON.parse(res.content[0].text) as Array<any>;
+    const rows = parseMessages(res);
     const row = rows.find((r) => r.id === rowId);
     expect(row).toBeDefined();
     expect(row.attachments[0].file_id).toBe("FID_UNREAD");
     expect(row.attachments[0].local_path).toBeNull();
+  });
+
+  test("every read carries a coverage verdict, so [] is never ambiguous", () => {
+    const parsed = JSON.parse(
+      handleGetUnread({ chat_id: CHAT }).content[0].text,
+    );
+    expect(parsed).toHaveProperty("coverage");
+    expect(parsed).toHaveProperty("count");
+    expect(parsed).toHaveProperty("messages");
+    expect(["covered", "unverifiable"]).toContain(parsed.coverage.verdict);
+    expect(parsed.coverage.reason).toBeTruthy();
+    expect(parsed.count).toBe(parsed.messages.length);
   });
 });
 

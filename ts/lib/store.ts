@@ -10,7 +10,20 @@ import { STATE_DIR } from "./config.js";
 import { log } from "./log.js";
 import { ensureColumn } from "./store-migrations.js";
 import { assertHermeticTestStore } from "./hermetic-guard.js";
+import { initStoreMeta } from "./store-meta.js";
 export { ensureColumn } from "./store-migrations.js";
+// Poller restart-state (offset / poll heartbeat / coverage gap) moved to
+// store-meta.ts when this file hit the 512-line ceiling. Re-exported here so
+// every existing `from "./store.js"` importer is unaffected.
+export {
+  saveOffset,
+  loadOffset,
+  saveLastPollTs,
+  loadLastPollTs,
+  saveCoverageGap,
+  loadCoverageGap,
+  type CoverageGap,
+} from "./store-meta.js";
 
 // Scitex-standard DB filename (was "messages.db"): self-describing in the
 // ~/.scitex/claude-code-telegrammer runtime tree. SQLite derives the -wal/-shm
@@ -35,10 +48,6 @@ let stmtMarkAllRead: Statement | null = null;
 let stmtGetUnreadAll: Statement | null = null;
 let stmtGetUnreadChat: Statement | null = null;
 let stmtGetHistory: Statement | null = null;
-let stmtSaveOffset: Statement | null = null;
-let stmtLoadOffset: Statement | null = null;
-let stmtSaveLastPollTs: Statement | null = null;
-let stmtLoadLastPollTs: Statement | null = null;
 let stmtInsertAttachment: Statement | null = null;
 let stmtAttachmentsForRow: Statement | null = null;
 let stmtAttachmentByFileId: Statement | null = null;
@@ -176,23 +185,9 @@ export function initStore(): void {
     SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC LIMIT ? OFFSET ?
   `);
 
-  stmtSaveOffset = db.prepare(`
-    INSERT INTO meta (key, value) VALUES ('update_offset', ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `);
-
-  stmtLoadOffset = db.prepare(`
-    SELECT value FROM meta WHERE key = 'update_offset'
-  `);
-
-  stmtSaveLastPollTs = db.prepare(`
-    INSERT INTO meta (key, value) VALUES ('last_poll_ts', ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `);
-
-  stmtLoadLastPollTs = db.prepare(`
-    SELECT value FROM meta WHERE key = 'last_poll_ts'
-  `);
+  // Poller restart-state (update_offset / last_poll_ts / coverage_gap) lives
+  // in store-meta.ts — same `meta` table, its own responsibility.
+  initStoreMeta(db);
 
   stmtInsertAttachment = db.prepare(`
     INSERT INTO attachments (message_row_id, kind, file_id, file_unique_id, file_name, mime_type, file_size)
@@ -344,39 +339,6 @@ export function getHistory(
   return stmtGetHistory.all(chatId, limit, offset) as Array<
     Record<string, unknown>
   >;
-}
-
-// ── Offset persistence ─────────────────────────────────────────────────────
-
-export function saveOffset(offset: number): void {
-  if (!stmtSaveOffset) throw new Error("store not initialized");
-  stmtSaveOffset.run(String(offset));
-}
-
-export function loadOffset(): number {
-  if (!stmtLoadOffset) throw new Error("store not initialized");
-  const row = stmtLoadOffset.get() as { value: string } | undefined;
-  return row ? parseInt(row.value, 10) : 0;
-}
-
-// ── Poll heartbeat persistence ─────────────────────────────────────────────
-//
-// Mirrors the offset kv pair above: a single meta row ('last_poll_ts')
-// stamped with the epoch-ms time of the most recent SUCCESSFUL getUpdates
-// return. Persisted (not just in-process) so an out-of-band health probe
-// can read poll-freshness after the fact — the wedged-but-alive poller
-// (process up, kill-0 passes, but getUpdates never returns) is otherwise
-// invisible to a liveness check. See poll-watchdog.ts.
-
-export function saveLastPollTs(epochMs: number): void {
-  if (!stmtSaveLastPollTs) throw new Error("store not initialized");
-  stmtSaveLastPollTs.run(String(epochMs));
-}
-
-export function loadLastPollTs(): number {
-  if (!stmtLoadLastPollTs) throw new Error("store not initialized");
-  const row = stmtLoadLastPollTs.get() as { value: string } | undefined;
-  return row ? parseInt(row.value, 10) : 0;
 }
 
 // ── Attachments ────────────────────────────────────────────────────────────
