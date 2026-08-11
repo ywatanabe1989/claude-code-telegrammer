@@ -22,7 +22,7 @@ import { validateBotToken } from "../lib/startup-validate.js";
 import { FAKE_TOKEN, healthyInputs, byName } from "./health-fixtures.js";
 
 describe("shared contract shape", () => {
-  test("healthy inputs → ok:true, all 14 checks present, passing hints null", () => {
+  test("healthy inputs → ok:true, all 15 checks present, passing hints null", () => {
     const report = buildHealthReport(healthyInputs());
     expect(report.package).toBe("claude-code-telegrammer");
     expect(report.ok).toBe(true);
@@ -38,6 +38,13 @@ describe("shared contract shape", () => {
       // A month of silent inbound outage lived in that gap — see
       // lib/health-checks-ingestion.ts.
       "ingestion_live",
+      // Immediately after ingestion_live because it answers the question
+      // ingestion_live cannot: a poll that SUCCEEDS with zero updates is
+      // identical to a healthy quiet channel. Measured 2026-08-11 on
+      // scitex-storage — 14 days with nothing stored, 14/14 green, and it
+      // took four hand-run queries to establish the silence was innocent.
+      // See lib/health-checks-inbound-recency.ts.
+      "inbound_recency",
       "allowlist_nonempty",
       "state_dir_writable",
       "db_schema_current",
@@ -59,7 +66,7 @@ describe("shared contract shape", () => {
     // default fixture (no TURN_URL) — still counted, still hint:null, still
     // "ok" in the summary (skipped is a legitimate healthy state here, same
     // as the tokenless-skip pattern elsewhere in this report).
-    expect(report.summary).toContain("14/14");
+    expect(report.summary).toContain("15/15");
   });
 
   test("every failing check carries a non-null hint (fail-loud, actionable)", () => {
