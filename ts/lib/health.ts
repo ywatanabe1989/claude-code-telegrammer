@@ -46,6 +46,7 @@ import {
   checkBotTokenValid,
   checkWebhookAbsent,
   checkPollerAlive,
+  // (checkIngestionLive lives in its own module — see the import below.)
   checkAllowlistNonempty,
   checkStateDirWritable,
   checkDbSchemaCurrent,
@@ -60,11 +61,15 @@ import {
   checkCodeCurrent,
   type CodeCurrencyProbe,
 } from "./health-checks-code.js";
+import { checkIngestionLive } from "./health-checks-ingestion.js";
+import { checkInboundRecency } from "./health-checks-inbound-recency.js";
 
 // Re-export the builders + skip marker so callers/tests have one import surface.
 export * from "./health-checks.js";
 export * from "./health-checks-wake.js";
 export * from "./health-checks-code.js";
+export * from "./health-checks-ingestion.js";
+export * from "./health-checks-inbound-recency.js";
 
 // ── Report shape (shared contract) ──────────────────────────────────────────
 
@@ -138,6 +143,26 @@ export type DbProbe =
        *  inbound rows carry one. */
       maxUpdateId: number | null;
       inboundCount: number;
+      /**
+       * meta.last_poll_ts — epoch-ms of the last SUCCESSFUL getUpdates
+       * (recordSuccessfulPoll persists it). null ⇔ never stamped.
+       *
+       * This is the number that separates "the poller process exists" from
+       * "inbound is actually flowing"; see checkIngestionLive. Optional so
+       * existing callers/fixtures stay valid — absent ⇔ the check skips
+       * rather than failing the report.
+       */
+      lastPollTs?: number | null;
+      /**
+       * Epoch-ms of the newest STORED inbound row (MAX(received_at)).
+       *
+       * last_poll_ts says polling works; this says something ARRIVED. A poll
+       * that succeeds with zero updates is identical to a healthy quiet
+       * channel, so ingestion_live cannot separate the two — see
+       * checkInboundRecency. Optional so existing callers/fixtures stay
+       * valid. Absent ⇔ nobody asked; null ⇔ asked and no inbound row exists.
+       */
+      newestInboundMs?: number | null;
     };
 
 /**
@@ -184,6 +209,11 @@ export interface HealthInputs {
    * rather than failing the report.
    */
   codeCurrency?: CodeCurrencyProbe;
+  /**
+   * Epoch-ms clock, injectable so ingestion_live is unit-testable without
+   * timers. Absent ⇔ Date.now().
+   */
+  now?: number;
 }
 
 // ── Report assembly ─────────────────────────────────────────────────────────
@@ -200,6 +230,16 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
     checkBotTokenValid(inputs.tokenCheck),
     checkWebhookAbsent(inputs.webhook),
     checkPollerAlive(inputs.poller),
+    // Right after poller_alive on purpose: "the process exists" and "messages
+    // are arriving" are different questions, and a month of silence lived in
+    // the gap between them. See health-checks-ingestion.ts.
+    checkIngestionLive(inputs.db, inputs.poller, inputs.now ?? Date.now()),
+    // Directly after ingestion_live, because it is the NEXT question and the
+    // one ingestion_live cannot answer: polls succeeding and messages
+    // arriving are different facts, and a successful poll returning zero
+    // updates looks identical to a healthy quiet channel. See
+    // health-checks-inbound-recency.ts.
+    checkInboundRecency(inputs.db, inputs.poller, inputs.now ?? Date.now()),
     checkAllowlistNonempty(inputs.access),
     checkStateDirWritable(inputs.stateDirProbe),
     checkDbSchemaCurrent(inputs.db),

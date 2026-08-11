@@ -8,7 +8,7 @@
  * processBatch decides is safe to advance to.
  */
 
-import { tgApi } from "./telegram-api.js";
+import { tgApi, isConflictError } from "./telegram-api.js";
 import { loadAccess } from "./access.js";
 import { log } from "./log.js";
 import { BOT_TOKEN_HASH, STATE_DIR } from "./config.js";
@@ -233,7 +233,18 @@ export async function startPolling(): Promise<void> {
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes("409")) {
+        // Classify on the ENVELOPE, never on the prose. This was
+        // `errMsg.includes("409")` until 2026-08-11, and Telegram's 409 body
+        // carries its code in `error_code` while the message it produced read
+        // "Conflict: terminated by other getUpdates request" — no digits. So
+        // this branch never ran: 161 conflicts in four hours all fell through
+        // to the generic retry below, consecutive409 stayed 0, the
+        // stand-down alert below was unreachable, and because no poll ever
+        // succeeded the heartbeat froze until the stall watchdog respawned
+        // the poller straight back into the contention. scitex-hub's inbound
+        // rail was dead for a month behind green liveness checks.
+        // See lib/telegram-api.ts and test/conflict-classification.test.ts.
+        if (isConflictError(err)) {
           consecutive409 += 1;
           // 409 from Telegram = "another consumer is in a getUpdates
           // call". Under "newest wins", the most common cause RIGHT after

@@ -272,13 +272,36 @@ export function probeDb(dbPath: string = DB_PATH): DbProbe {
           "COUNT(*) AS n FROM messages WHERE direction = 'inbound' AND raw_json IS NOT NULL",
       )
       .get() as { max_id: number | null; n: number };
+    // The heartbeat recordSuccessfulPoll() persists. Read here so
+    // checkIngestionLive can separate "the poller process exists" from
+    // "messages are arriving" — the distinction a month of silence hid.
+    const poll = db
+      .prepare("SELECT value FROM meta WHERE key = 'last_poll_ts'")
+      .get() as { value: string } | undefined;
+    // Age of the newest inbound row — the "did anything ARRIVE?" signal that
+    // last_poll_ts cannot give (a successful poll returning zero updates looks
+    // exactly like a healthy quiet channel). Converted to epoch-ms in SQL
+    // rather than parsed in TS: received_at is written by SQLite's
+    // datetime('now'), which is UTC without a zone suffix, and `new Date()`
+    // on that string reads it as LOCAL time.
+    const newest = db
+      .prepare(
+        "SELECT MAX(strftime('%s', received_at)) AS s FROM messages " +
+          "WHERE direction = 'inbound' AND received_at IS NOT NULL",
+      )
+      .get() as { s: string | null };
     const parsedOffset = off ? parseInt(off.value, 10) : NaN;
+    const parsedPoll = poll ? parseInt(poll.value, 10) : NaN;
+    const parsedNewest =
+      newest.s === null ? NaN : parseInt(newest.s, 10) * 1000;
     return {
       exists: true,
       schemaVersion: ver?.value ?? null,
       updateOffset: Number.isFinite(parsedOffset) ? parsedOffset : null,
       maxUpdateId: agg.max_id ?? null,
       inboundCount: agg.n,
+      lastPollTs: Number.isFinite(parsedPoll) ? parsedPoll : null,
+      newestInboundMs: Number.isFinite(parsedNewest) ? parsedNewest : null,
     };
   } catch (err) {
     return {

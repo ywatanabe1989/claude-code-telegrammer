@@ -8,26 +8,37 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install package
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - name: Set up Python ${{ matrix.python-version }} (uv-managed)
+        run: uv python install ${{ matrix.python-version }}
+      - name: Install package + pyyaml in a uv venv
+        # Spartan self-hosted runners' Pythons are uv-managed / PEP 668
+        # externally-managed, so system `pip install` fails with
+        # "externally-managed-environment". uv venv + uv pip is the
+        # ecosystem-standard install path on self-hosted.
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          pip install pyyaml
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python -e .
+          uv pip install --python .venv/bin/python pyyaml
       - name: Run shell tests
-        run: bash tests/test-state-detection.sh
+        # .venv/bin on PATH so the shell suite's `python3` (and pyyaml, used by
+        # lib/common.sh yaml_get) resolves to the venv interpreter.
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          bash tests/test-state-detection.sh
 
   test-ts:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
