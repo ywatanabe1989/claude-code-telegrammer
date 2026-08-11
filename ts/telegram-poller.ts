@@ -129,18 +129,23 @@ initStore();
 // claim, so a SIGTERM raced by a newer poller during our own startup will
 // not lose its record — the same invariant telegram-server.ts's old
 // shutdown() relied on for this exact pidfile.
+// `trigger` is a parameter for the same reason as in telegram-server.ts: this
+// function has THREE call sites (SIGTERM, SIGINT, and the teardown self-check
+// below) and the log named none of them. The poller is the INBOUND rail — when
+// it stops, messages stop being recorded at all — so "why did it stop" is the
+// first question anyone will ask, and until now the log could not answer it.
 let shuttingDown = false;
-function shutdown(): void {
+function shutdown(trigger: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  log("poller", "standalone poller shutting down");
+  log("poller", `standalone poller shutting down (trigger=${trigger} pid=${process.pid})`);
   stopPolling();
   releaseAuthoritative({ stateDir: STATE_DIR, tokenHash: BOT_TOKEN_HASH });
   setTimeout(() => process.exit(0), 2000);
 }
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 // ── Teardown-vs-restart stub (scitex-todo card cct-mcp-server-periodic-
 // drop-20260712) ────────────────────────────────────────────────────────
@@ -159,7 +164,7 @@ process.on("SIGINT", shutdown);
 // future sac change ever needs this repo to cooperate more actively.
 const teardownCheck = setInterval(() => {
   void shouldSelfTerminateOnTeardown().then((should) => {
-    if (should) shutdown();
+    if (should) shutdown("teardown-self-check");
   });
 }, 60_000);
 if (
