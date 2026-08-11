@@ -98,7 +98,13 @@ export function registerTools(mcp: Server): void {
         name: "get_history",
         description:
           "Get message history for a chat from the local DB. " +
-          "Returns both inbound and outbound messages in chronological order. " +
+          "Returns {coverage, count, messages} — messages are inbound and " +
+          "outbound in chronological order, and `coverage` states whether " +
+          "this store can VOUCH for that window: coverage.verdict is " +
+          "'covered' (ingestion is live, so what you see is what arrived) or " +
+          "'unverifiable' (the poller was not demonstrably alive, or a gap " +
+          "in Telegram's update_id sequence was recorded — read " +
+          "coverage.reason before concluding anything from an empty result). " +
           "Messages with stored attachments include an `attachments` array " +
           "({kind, file_id, file_name, mime_type, local_path, downloaded_at}); " +
           "local_path is set once the background auto-download completed.",
@@ -122,6 +128,12 @@ export function registerTools(mcp: Server): void {
         name: "get_unread",
         description:
           "Get unread inbound messages, optionally filtered by chat_id. " +
+          "Returns {coverage, count, messages}. An EMPTY messages array is " +
+          "only evidence that nothing was sent when coverage.verdict is " +
+          "'covered'; when it is 'unverifiable' the store could not observe " +
+          "that window at all, so treat the silence as UNKNOWN and act on " +
+          "coverage.reason (this is the restart-protocol case: a quiet inbox " +
+          "must never be mistaken for an unobserved one). " +
           "Messages with stored attachments include an `attachments` array " +
           "(see get_history).",
         inputSchema: {

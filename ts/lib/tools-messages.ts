@@ -19,8 +19,15 @@ import {
   attachmentsForRows,
   findAttachmentByFileId,
   markAttachmentDownloaded,
+  loadLastPollTs,
+  loadCoverageGap,
   type AttachmentRow,
 } from "./store.js";
+import {
+  buildCoverage,
+  assertValidCoverage,
+  type IngestionCoverage,
+} from "./ingestion-coverage.js";
 import { downloadNow } from "./attachments.js";
 import { log } from "./log.js";
 
@@ -68,18 +75,68 @@ export function withAttachments(
   });
 }
 
+/**
+ * Read the store's own statement about whether it can vouch for what it just
+ * returned. Best-effort: if the coverage probe itself fails, the caller still
+ * gets its messages, with the failure stated (never a silent "covered").
+ */
+export function currentCoverage(): IngestionCoverage {
+  try {
+    const gap = loadCoverageGap();
+    const coverage = buildCoverage({
+      lastPollTs: loadLastPollTs(),
+      lastGapAt: gap?.at ?? null,
+      lastGapMissedUpdates: gap?.missedUpdates ?? null,
+    });
+    assertValidCoverage(coverage);
+    return coverage;
+  } catch (err) {
+    log("tools", "coverage probe failed", { error: String(err) });
+    return {
+      verdict: "unverifiable",
+      lastPollTs: null,
+      pollStaleMs: null,
+      stalenessThresholdMs: 0,
+      lastGapAt: null,
+      lastGapMissedUpdates: null,
+      reason:
+        `The coverage probe itself failed (${String(err)}), so this store` +
+        " cannot say whether the result below is complete. Treat an empty" +
+        " result as UNKNOWN, not as 'nothing was sent'.",
+    };
+  }
+}
+
+/**
+ * Every message read answers in ONE shape: `{coverage, count, messages}`.
+ *
+ * It used to answer with a bare array, which made `[]` mean both "the
+ * operator said nothing" and "this store recorded nothing for that window" —
+ * the exact ambiguity that let 8h35m of scitex-dev's conversation read as a
+ * quiet inbox on 2026-08-10. The fleet restart protocol tells every agent to
+ * check this tool and NOT to assume a quiet inbox means nothing was sent; the
+ * tool now carries the evidence needed to honour that instruction.
+ */
+function messagesResult(rows: Array<Record<string, unknown>>): ToolResult {
+  return jsonResult({
+    coverage: currentCoverage(),
+    count: rows.length,
+    messages: withAttachments(rows),
+  });
+}
+
 export function handleGetHistory(args: Record<string, unknown>): ToolResult {
   const chatId = args.chat_id as string;
   const limit = (args.limit as number) ?? 20;
   const offset = (args.offset as number) ?? 0;
   assertAllowedChat(chatId);
-  return jsonResult(withAttachments(getHistory(chatId, limit, offset)));
+  return messagesResult(getHistory(chatId, limit, offset));
 }
 
 export function handleGetUnread(args: Record<string, unknown>): ToolResult {
   const chatId = args.chat_id as string | undefined;
   if (chatId) assertAllowedChat(chatId);
-  return jsonResult(withAttachments(getUnread(chatId)));
+  return messagesResult(getUnread(chatId));
 }
 
 /**

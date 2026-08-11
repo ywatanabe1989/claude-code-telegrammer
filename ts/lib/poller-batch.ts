@@ -21,6 +21,7 @@
 import { log } from "./log.js";
 import { broadcastSystemAlert } from "./loudfail.js";
 import { handleUpdate, type UpdateStatus } from "./handle-update.js";
+import { saveCoverageGap, type CoverageGap } from "./store-meta.js";
 
 /**
  * Consecutive persistError count on the SAME update_id we tolerate
@@ -58,6 +59,67 @@ function emitLoud(content: string): void {
 }
 
 /**
+ * Did updates go missing between what we ASKED for and what we GOT?
+ *
+ * We always call getUpdates with `offset = <last durable update_id> + 1`, so
+ * a healthy batch starts EXACTLY at that offset. If Telegram's first
+ * update_id is HIGHER, the ids in between existed and are gone: either
+ * another consumer holding this bot token confirmed them (which discards them
+ * for us — Telegram serves each update to whoever asks first), or they aged
+ * out of its ~24h retention while nothing was polling.
+ *
+ * Both are the same fact for a reader: update_ids Telegram counted never
+ * reached this store, and re-reading will not bring them back. We record that
+ * FACT rather than a diagnosis, because we cannot tell the two causes apart
+ * from here.
+ *
+ * KNOWN OVERCOUNT, stated rather than hidden: we pass `allowed_updates`
+ * (message + message_reaction), so update types we never subscribed to also
+ * consume ids and show up here as a small gap. That inflates the count; it
+ * does not invent one. A gap of thousands is contention or expiry, a gap of
+ * one or two is usually a filtered update type.
+ *
+ * This is the signal lib/poll-watchdog.ts structurally cannot carry: its
+ * heartbeat is stamped whenever getUpdates RETURNS, and a batch stolen by
+ * another consumer returns perfectly well — just empty. On 2026-08-10 that
+ * cost scitex-dev 8h35m of both-directions history behind a silent watchdog.
+ *
+ * Logged, never broadcast: the operator can do nothing about it in the
+ * moment, and #92/#95 established that unactionable alarms destroy the one
+ * channel a real outage needs. The read path (lib/ingestion-coverage.ts)
+ * surfaces it to the AGENT, which can act on it.
+ */
+export function detectCoverageGap(
+  updates: any[],
+  startOffset: number,
+  recordGap: (gap: CoverageGap) => void,
+  now: () => number,
+): void {
+  // startOffset 0 means "give me whatever you have" — there is no expectation
+  // to violate, so a first poll can never report a gap.
+  if (startOffset <= 0 || updates.length === 0) return;
+  const first = updates[0]?.update_id;
+  if (typeof first !== "number" || first <= startOffset) return;
+
+  const missedUpdates = first - startOffset;
+  log(
+    "poller",
+    `COVERAGE GAP: asked Telegram for update ${startOffset}, got ${first} — ` +
+      `${missedUpdates} update_id(s) never reached this store and cannot be ` +
+      "refetched. Another consumer holding this bot token, or Telegram's ~24h " +
+      "retention expiring while nothing polled. Reads over this window are now " +
+      "reported as unverifiable rather than empty.",
+    { startOffset, firstUpdateId: first, missedUpdates },
+  );
+  try {
+    recordGap({ at: now(), missedUpdates });
+  } catch (err) {
+    // A diagnostic that cannot be written must not take down ingestion.
+    log("poller", "failed to persist coverage gap", { error: String(err) });
+  }
+}
+
+/**
  * Process one getUpdates batch and return the offset that should be
  * persisted (via saveOffset) afterwards.
  *
@@ -82,7 +144,11 @@ export async function processBatch(
   updates: any[],
   startOffset: number,
   handle: UpdateHandler = handleUpdate,
+  recordGap: (gap: CoverageGap) => void = saveCoverageGap,
+  now: () => number = Date.now,
 ): Promise<number> {
+  detectCoverageGap(updates, startOffset, recordGap, now);
+
   let offset = startOffset;
 
   for (const update of updates) {
