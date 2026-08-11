@@ -36,3 +36,10 @@ build/
 # separate, deliberate call — not a side effect of this rule.
 /GITIGNORE/
 /GITIGNORED/
+
+# Python bytecode. This repo had NO bytecode rule at all — the ts/ runtime is
+# the headline, but src/claude_code_telegrammer/ is a real Python package and
+# importing it leaves __pycache__ behind. Regenerated on every import; never
+# source.
+__pycache__/
+*.py[cod]
