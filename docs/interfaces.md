@@ -41,6 +41,31 @@ meta keys). Retrieve the file via `download_attachment` with that `file_id`
 or with the message's `row_id`; attachments are also auto-downloaded in the
 background, after which `get_history` / `get_unread` report the `local_path`.
 
+### Inbound replies
+
+When the operator replies to a specific message, the `<channel …>` tag gains
+`reply_to_message_id`, and the content line is prefixed with a one-line
+descriptor carrying an excerpt of the replied-to message:
+
+```
+<channel source="cct" … message_id="8303" reply_to_message_id="8293">
+[in-reply-to message_id=8293 from=bot:@YourBot text="…which option, A or B?"]
+A
+</channel>
+```
+
+The excerpt exists so a one-word reply ("A") is answerable without a second
+lookup. It is capped at 512 code points — above the 509-character maximum of
+the real message corpus, so it does not truncate in practice — collapsed to a
+single line, and marked when it does truncate
+(`truncated_from=<N>`, plus a trailing `…`).
+
+Both directions can be reply targets; replying to a message the BOT sent is
+the common case. A target the bridge cannot resolve is stated rather than
+omitted (`text=UNRESOLVED …`), so "not a reply" and "a reply I could not
+resolve" never look alike. A quoted fragment (Bot API 7.0) renders as
+`quote="…"` instead of `text="…"`.
+
 ## Skills (for AI agent discovery)
 
 A bundled skill lives at

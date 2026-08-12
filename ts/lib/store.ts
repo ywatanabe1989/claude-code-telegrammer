@@ -48,6 +48,7 @@ let stmtMarkAllRead: Statement | null = null;
 let stmtGetUnreadAll: Statement | null = null;
 let stmtGetUnreadChat: Statement | null = null;
 let stmtGetHistory: Statement | null = null;
+let stmtMessageByMessageId: Statement | null = null;
 let stmtInsertAttachment: Statement | null = null;
 let stmtAttachmentsForRow: Statement | null = null;
 let stmtAttachmentByFileId: Statement | null = null;
@@ -183,6 +184,16 @@ export function initStore(): void {
 
   stmtGetHistory = db.prepare(`
     SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC LIMIT ? OFFSET ?
+  `);
+
+  // Reply-target lookup (lib/reply-context.ts). Deliberately NOT filtered by
+  // direction: the message an operator replies to is usually one the BOT
+  // sent, so an inbound-only lookup would miss the common case entirely.
+  // Newest row wins — (chat_id, message_id, direction) is unique, so the only
+  // way to get two is an inbound and an outbound sharing an id.
+  stmtMessageByMessageId = db.prepare(`
+    SELECT * FROM messages WHERE chat_id = ? AND message_id = ?
+    ORDER BY id DESC LIMIT 1
   `);
 
   // Poller restart-state (update_offset / last_poll_ts / coverage_gap) lives
@@ -339,6 +350,25 @@ export function getHistory(
   return stmtGetHistory.all(chatId, limit, offset) as Array<
     Record<string, unknown>
   >;
+}
+
+/**
+ * Look up ONE stored message by its Telegram (chat_id, message_id).
+ *
+ * The reply-target resolver (lib/reply-context.ts) uses this as its last
+ * resort, for a reply Telegram did not inline the body of. Returns null when
+ * the chat has no such message — which is a real, reportable answer
+ * ("UNRESOLVED"), not an error to swallow.
+ */
+export function getMessageByMessageId(
+  chatId: string,
+  messageId: string,
+): Record<string, unknown> | null {
+  if (!stmtMessageByMessageId) throw new Error("store not initialized");
+  const row = stmtMessageByMessageId.get(chatId, messageId) as
+    | Record<string, unknown>
+    | undefined;
+  return row ?? null;
 }
 
 // ── Attachments ────────────────────────────────────────────────────────────
