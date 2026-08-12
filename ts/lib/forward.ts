@@ -268,6 +268,30 @@ export function forwardBanner(
 }
 
 /**
+ * The "(photo)" / "(document: x)" / … placeholders a message's attached
+ * media contributes to the agent-visible text.
+ *
+ * Extracted from buildInboundText so lib/reply-context.ts can describe a
+ * REPLY TARGET that is a caption-less media message with the same words the
+ * agent would have seen had that message been delivered directly — one
+ * vocabulary for "what was in this message", not two that drift.
+ */
+export function mediaPlaceholders(msg: any): string[] {
+  const placeholders: string[] = [];
+  if (msg?.photo) placeholders.push("(photo)");
+  if (msg?.document)
+    placeholders.push(`(document: ${msg.document.file_name ?? "file"})`);
+  if (msg?.voice) placeholders.push("(voice message)");
+  if (msg?.audio) placeholders.push("(audio)");
+  if (msg?.video) placeholders.push("(video)");
+  if (msg?.sticker) {
+    const emoji = msg.sticker.emoji ? ` ${msg.sticker.emoji}` : "";
+    placeholders.push(`(sticker${emoji})`);
+  }
+  return placeholders;
+}
+
+/**
  * Compute the text the agent sees, given a raw Telegram message:
  *   - text/caption are the BODY
  *   - every attached media yields a PLACEHOLDER ("(document: x)", "(photo)", …)
@@ -293,17 +317,7 @@ export function forwardBanner(
 export function buildInboundText(msg: any): string {
   const body: string = msg?.text ?? msg?.caption ?? "";
 
-  const placeholders: string[] = [];
-  if (msg?.photo) placeholders.push("(photo)");
-  if (msg?.document)
-    placeholders.push(`(document: ${msg.document.file_name ?? "file"})`);
-  if (msg?.voice) placeholders.push("(voice message)");
-  if (msg?.audio) placeholders.push("(audio)");
-  if (msg?.video) placeholders.push("(video)");
-  if (msg?.sticker) {
-    const emoji = msg.sticker.emoji ? ` ${msg.sticker.emoji}` : "";
-    placeholders.push(`(sticker${emoji})`);
-  }
+  const placeholders = mediaPlaceholders(msg);
 
   let text: string;
   if (placeholders.length && body) {

@@ -140,6 +140,35 @@ export function wakeEnabled(): boolean {
 }
 
 /**
+ * The meta keys rendered as <channel …> attributes, in order.
+ *
+ * This list IS the boundary. A key absent from it is silently dropped no
+ * matter how carefully upstream set it — which is exactly how the reply
+ * target went missing for months (operator incident 2026-08-11, message
+ * 8303 → 8293): handle-update.ts had been setting meta.reply_to_message_id
+ * all along, and this renderer threw it away, so the agent received a bare
+ * "A" with nothing to attach it to and answered the wrong question.
+ *
+ * `reply_to_message_id` gives the agent the machine-readable REFERENCE. The
+ * excerpt does NOT belong here — attribute values are unescaped and would
+ * break the tag on the first quote character — it rides in the content, as
+ * lib/reply-context.ts::replyDescriptor.
+ *
+ * Values are interpolated into `key="value"` without escaping, so only add
+ * keys whose values are ids / labels the bridge itself controls, never raw
+ * user text.
+ */
+const WAKE_ATTRS = [
+  "source",
+  "chat_id",
+  "message_id",
+  "row_id",
+  "user",
+  "user_id",
+  "reply_to_message_id",
+] as const;
+
+/**
  * Render the turn input fed to /v1/turn. Mirrors the <channel ...> framing
  * Claude renders for an in-session push so a woken (idle) agent sees the same
  * shape — source, ids, and the message body — attributed to its sender.
@@ -151,8 +180,7 @@ export function wakeEnabled(): boolean {
  * other angle brackets in the body are preserved verbatim.
  */
 export function wakeText(text: string, meta: WakeMeta): string {
-  const attrs = ["source", "chat_id", "message_id", "row_id", "user", "user_id"]
-    .filter((k) => meta[k] != null && meta[k] !== "")
+  const attrs = WAKE_ATTRS.filter((k) => meta[k] != null && meta[k] !== "")
     .map((k) => `${k}="${meta[k]}"`)
     .join(" ");
   const safeBody = neutralizeChannelEnvelope(text);

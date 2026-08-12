@@ -19,7 +19,11 @@ import {
   BOT_TOKEN_HASH,
   CHANNEL_SOURCE,
 } from "./config.js";
-import { saveInbound, insertAttachment } from "./store.js";
+import {
+  saveInbound,
+  insertAttachment,
+  getMessageByMessageId,
+} from "./store.js";
 import { queueDownload } from "./attachments.js";
 import {
   markDelivered,
@@ -33,6 +37,7 @@ import {
   buildInboundText,
   attachmentDescriptor,
 } from "./forward.js";
+import { parseReplyContext, replyDescriptor } from "./reply-context.js";
 import { sendLoudFailReply } from "./loudfail.js";
 import { recordWakeFailure, recordWakeSuccess } from "./wake-health.js";
 import { neutralizeChannelEnvelope } from "./sanitize.js";
@@ -323,6 +328,39 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
       deliveredText = `${text} ${attachmentDescriptor(kind, obj)}`;
       break;
     }
+  }
+
+  // REPLY CONTEXT (operator incident 2026-08-11, message 8303 → 8293).
+  //
+  // A reply whose target never reaches the agent is worse than no context:
+  // the operator's one-letter "A" was mapped onto an entirely different
+  // question. meta.reply_to_message_id above is necessary but NOT sufficient
+  // — on the interactive-CLI path the harness renders only its own whitelist
+  // of meta keys, so the CONTENT string is the only carrier guaranteed to
+  // arrive (the same reason attachmentDescriptor rides in the content).
+  //
+  // Prepended, not appended: the context FRAMES the body, and a one-word
+  // body is easy to lose after a long quotation.
+  //
+  // The store lookup is the last resort inside parseReplyContext — used only
+  // when Telegram did not inline the target's body — and it must never be
+  // able to break delivery, hence the swallow-and-log.
+  const replyCtx = parseReplyContext(msg, (targetId) => {
+    try {
+      const row = getMessageByMessageId(chatId, targetId);
+      return typeof row?.text === "string" ? row.text : null;
+    } catch (err) {
+      log("poller", "reply-target lookup failed", { error: String(err) });
+      return null;
+    }
+  });
+  if (replyCtx) {
+    // Also covers the external_reply case, where the id comes from the
+    // reply's ORIGIN rather than from an inlined reply_to_message and so was
+    // never seen by the replyToMessageId assignment above.
+    meta.reply_to_message_id = replyCtx.message_id;
+    meta.reply_to_resolution = replyCtx.resolution;
+    deliveredText = `${replyDescriptor(replyCtx)}\n${deliveredText}`;
   }
 
   log("poller", `delivering message from ${userId} in ${chatId}`, {
