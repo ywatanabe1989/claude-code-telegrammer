@@ -198,7 +198,7 @@ describe("handleUpdate: a failed wake falls back to the notify relay", () => {
     return { delivered, mcp: mcp as any };
   }
 
-  test("wake FAILURE queues the message for relay instead of dropping it", async () => {
+  test("wake FAILURE still delivers via relay — no per-message loud-fail reply", async () => {
     const loudFails: string[] = [];
     setLoudFailSender(async (_chatId, text) => {
       loudFails.push(text); // stubbed: a test must never post to real Telegram
@@ -216,9 +216,12 @@ describe("handleUpdate: a failed wake falls back to the notify relay", () => {
     expect(relayed).toBe(1);
     expect(JSON.stringify(delivered)).toContain(text);
 
-    // ...and the failure is still LOUD. A fallback that hid the outage would
-    // just be a silent fallback wearing a nicer hat.
-    expect(loudFails.length).toBe(1);
+    // No per-message loud-fail reply because the relay delivered the message.
+    // The outage is still surfaced — recordWakeFailure() still runs first and
+    // unchanged in this branch, and lib/wake-health.ts counts consecutive wake
+    // failures and calls broadcastSystemAlert() once a threshold is crossed,
+    // so the outage is announced ONCE for the outage, not once per message.
+    expect(loudFails.length).toBe(0);
 
     _resetLoudFail();
   });

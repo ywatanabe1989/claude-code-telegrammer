@@ -36,7 +36,10 @@ import {
 import { sendLoudFailReply } from "./loudfail.js";
 import { recordWakeFailure, recordWakeSuccess } from "./wake-health.js";
 import { neutralizeChannelEnvelope } from "./sanitize.js";
-import { savePendingNotification } from "./notify-relay.js";
+import {
+  savePendingNotification,
+  isNotificationPending,
+} from "./notify-relay.js";
 
 /**
  * Outcome of handling ONE inbound update, consumed by the poller batch
@@ -411,8 +414,6 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
         void markDone(chatId, String(msg.message_id));
       } else {
         recordWakeFailure(result.category, result.reason);
-        void markFailed(chatId, String(msg.message_id));
-        void sendLoudFailReply(chatId, Number(msg.message_id), result);
 
         // FALLBACK (incident-cct-operator-messages-not-arriving-20260714).
         //
@@ -439,6 +440,15 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
           content: neutralizeChannelEnvelope(deliveredText),
           meta,
         });
+
+        // Let the independent notify-relay path have a chance to deliver
+        // before we alarm the operator — it almost always wins.
+        setTimeout(() => {
+          if (isNotificationPending(rowId)) {
+            void markFailed(chatId, String(msg.message_id));
+            void sendLoudFailReply(chatId, Number(msg.message_id), result);
+          }
+        }, 15000);
       }
     });
   }
