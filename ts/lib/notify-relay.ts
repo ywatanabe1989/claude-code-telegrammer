@@ -81,6 +81,38 @@ export function savePendingNotification(
   }
 }
 
+/**
+ * Check whether a notification saved via savePendingNotification() is still
+ * pending (i.e. the notify-relay reader has not yet delivered and NULLed
+ * the column). Returns true when the row exists AND its
+ * pending_notification is not null. Returns false on any thrown error so a
+ * broken probe never creates a false alarm.
+ *
+ * @param rowId - The messages.row to check.
+ * @param dbPath - The database file to open. Defaults to DB_PATH. Injected
+ *   as an optional second parameter so tests can target a non-existent path
+ *   (e.g. inside a directory that does not exist) without touching the
+ *   shared database used by the whole suite.
+ */
+export function isNotificationPending(
+  rowId: number,
+  dbPath: string = DB_PATH,
+): boolean {
+  let db: Database | undefined;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    db.exec("PRAGMA busy_timeout = 5000;");
+    const row = db
+      .prepare("SELECT pending_notification FROM messages WHERE id = ?")
+      .get(rowId) as { pending_notification: string | null } | undefined;
+    return !!row && row.pending_notification !== null;
+  } catch {
+    return false;
+  } finally {
+    db?.close();
+  }
+}
+
 interface PendingRow {
   id: number;
   pending_notification: string;
