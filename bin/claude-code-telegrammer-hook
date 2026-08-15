@@ -4,8 +4,8 @@
 #
 # Usage:
 #   claude-code-telegrammer-hook pre-start     # Write access.json (before Claude Code)
-#   claude-code-telegrammer-hook post-start    # Start watchdog + send startup commands
-#   claude-code-telegrammer-hook pre-stop      # Stop watchdog
+#   claude-code-telegrammer-hook post-start    # Send startup commands
+#   claude-code-telegrammer-hook pre-stop      # No-op (reserved for future cleanup)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -142,42 +142,9 @@ print('Wrote .mcp.json to', mcp_json_path)
     if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
       claude-code-telegrammer-init --session "$SESSION" --config "$AGENT_CONFIG_PATH"
     fi
-
-    # Start watchdog if enabled
-    if [[ -n "${AGENT_CONFIG_PATH:-}" ]]; then
-      WATCHDOG_ENABLED=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.enabled" "false")
-      if [[ "$WATCHDOG_ENABLED" == "true" || "$WATCHDOG_ENABLED" == "True" ]]; then
-        INTERVAL=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.interval" "1.5")
-        RESP_YN=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.responses.y_n" "1")
-        RESP_YYN=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.responses.y_y_n" "2")
-        RESP_WAIT=$(yaml_get "$AGENT_CONFIG_PATH" "spec.watchdog.responses.waiting" "/speak-and-call")
-
-        WATCHDOG_SESSION="${SESSION}-watchdog"
-
-        export CLAUDE_CODE_TELEGRAMMER_SESSION="$SESSION"
-        export CLAUDE_CODE_TELEGRAMMER_WATCHDOG_INTERVAL="$INTERVAL"
-        export CLAUDE_CODE_TELEGRAMMER_RESP_Y_N="$RESP_YN"
-        export CLAUDE_CODE_TELEGRAMMER_RESP_Y_Y_N="$RESP_YYN"
-        export CLAUDE_CODE_TELEGRAMMER_RESP_WAITING="$RESP_WAIT"
-
-        WATCHDOG_BIN=$(which claude-code-telegrammer-watchdog 2>/dev/null || echo "")
-        if [[ -n "$WATCHDOG_BIN" ]]; then
-          screen -dmS "$WATCHDOG_SESSION" bash -c "$WATCHDOG_BIN --session $SESSION --interval $INTERVAL"
-          log_info "Watchdog started: $WATCHDOG_SESSION"
-        else
-          log_warn "claude-code-telegrammer-watchdog not found in PATH"
-        fi
-      fi
-    fi
     ;;
 
   pre-stop)
-    SESSION="${AGENT_SCREEN_NAME:-cld-telegram}"
-    WATCHDOG_SESSION="${SESSION}-watchdog"
-    if screen -ls 2>/dev/null | grep -q "$WATCHDOG_SESSION"; then
-      screen -S "$WATCHDOG_SESSION" -X quit 2>/dev/null || true
-      log_info "Watchdog stopped: $WATCHDOG_SESSION"
-    fi
     ;;
 
   *)
