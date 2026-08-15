@@ -36,6 +36,7 @@ import {
   writeFileSync,
   symlinkSync,
 } from "fs";
+import { Database } from "bun:sqlite";
 import { getenv } from "./env.js";
 import { resolveStateDir, sanitizeAgentSegment } from "./config.js";
 import { log as defaultLog } from "./log.js";
@@ -45,10 +46,46 @@ const OLD_DB = "messages.db";
 const MARKER_NEW = ".migrated-from"; // written in the NEW dir (authoritative)
 const MARKER_OLD = ".migrated-to"; // written in the OLD dir (best-effort)
 
-// SQLite sidecars copied ALONGSIDE the main DB so an un-checkpointed WAL (and
-// its shared-memory index) travel with the base file — copying the .db alone
-// could drop the newest not-yet-checkpointed writes.
-const DB_SIDECARS = ["-wal", "-shm"] as const;
+/**
+ * Take a CONSISTENT snapshot of a live SQLite database.
+ *
+ * This replaces an earlier approach that copied the `.db`, `-wal` and `-shm`
+ * as three independent `copyFileSync` calls. That was reaching for the right
+ * guarantee — its comment said the sidecars travel along "so an un-checkpointed
+ * WAL ... travel[s] with the base file" — but file-by-file copying cannot
+ * deliver it, because a `.db` and its `-wal` are ONE logical database captured
+ * at ONE instant. Copied at different instants from a source that is still
+ * being written to, they form a pair that never coexisted:
+ *
+ *   - a row committed between the WAL copy and the .db copy is in NEITHER (it
+ *     is in the live WAL after the snapshot, and not yet in main), and
+ *   - a checkpoint landing in that window resets the WAL with fresh salts, so
+ *     the already-copied WAL describes older page images than the .db copied
+ *     next.
+ *
+ * That window is not theoretical: this runs at STARTUP from both
+ * telegram-poller.ts and telegram-server.ts, while the poller writes
+ * meta.last_poll_ts about every 30s and inbound messages can arrive — and the
+ * attachments tree is copied inside the window. test/migrate-state-consistency
+ * reproduces the loss.
+ *
+ * `VACUUM INTO` is SQLite's own answer: one atomic, internally consistent
+ * snapshot taken against a live writer, written as a SINGLE self-contained file
+ * with no sidecars to keep in sync.
+ *
+ * FAIL LOUD, never fall back. If the source will not open as a database, that
+ * is a corrupt or non-SQLite artifact and the caller must hear about it — a
+ * silent degrade to raw file copy would reintroduce exactly the inconsistency
+ * this function exists to prevent.
+ */
+function vacuumInto(srcDb: string, dstDb: string): void {
+  const db = new Database(srcDb);
+  try {
+    db.run("VACUUM INTO ?", [dstDb]);
+  } finally {
+    db.close();
+  }
+}
 
 type LogFn = (
   component: string,
@@ -69,6 +106,8 @@ export interface MigrateOptions {
   now?: Date;
   /** Single-file copy primitive (defaults to fs.copyFileSync); injectable to test fail-loud. */
   copyFile?: (src: string, dst: string) => void;
+  /** Consistent DB snapshot primitive (defaults to VACUUM INTO); injectable to test fail-loud. */
+  snapshotDb?: (srcDb: string, dstDb: string) => void;
   /** Recursive dir copy primitive (defaults to fs.cpSync). */
   copyDir?: (src: string, dst: string) => void;
   /** Log sink (defaults to lib/log.ts::log). */
@@ -124,6 +163,7 @@ export function migrateLegacyStateDir(
   const home = opts.home ?? homedir();
   const log = opts.logFn ?? defaultLog;
   const copyFile = opts.copyFile ?? copyFileSync;
+  const snapshotDb = opts.snapshotDb ?? vacuumInto;
   const copyDir =
     opts.copyDir ??
     ((s: string, d: string) => cpSync(s, d, { recursive: true }));
@@ -188,21 +228,22 @@ export function migrateLegacyStateDir(
   // Copy phase — any failure here rethrows WITHOUT writing a marker, so a
   // half-migration is visible and the operator never sees a silent fresh DB.
   //
-  // ORDER MATTERS: the main .db is copied LAST. The newDb-exists guard above
+  // ORDER MATTERS: the database is written LAST. The newDb-exists guard above
   // treats the presence of the new .db as "migration fully complete", so the
   // .db must be the FINAL artifact written — a crash mid-copy (e.g. disk full
   // while copying attachments) then leaves newDb ABSENT, and the next startup
   // re-runs the whole migration cleanly instead of skipping on a stray new .db
   // and permanently stranding the un-copied attachments/access.json. The
-  // sidecar/attachment/access copies are overwrite/merge-safe, so a re-run is
-  // idempotent. A -wal/-shm copied WITHOUT its base .db (crash before the final
-  // step) is a harmless orphan the re-run overwrites — SQLite only reads the
-  // sidecars alongside the .db.
+  // attachment/access copies are overwrite/merge-safe, so a re-run is
+  // idempotent.
+  //
+  // Writing the DB last ALSO makes the snapshot the freshest possible: it is
+  // taken after the slow attachment copy rather than before it, so the window
+  // between "what we captured" and "what the source holds" is as small as we
+  // can make it. Under the old sidecar-copy scheme that same ordering was the
+  // bug — the WAL was captured before the window and the .db after it — which
+  // is why the fix is a single atomic snapshot rather than a re-ordering.
   try {
-    for (const suffix of DB_SIDECARS) {
-      const src = oldDb + suffix;
-      if (existsSync(src)) copyFile(src, newDb + suffix);
-    }
     const oldAttachments = join(oldDir, "attachments");
     if (existsSync(oldAttachments)) {
       copyDir(oldAttachments, join(newDir, "attachments"));
@@ -211,8 +252,10 @@ export function migrateLegacyStateDir(
     if (existsSync(oldAccess)) {
       copyFile(oldAccess, join(newDir, "access.json"));
     }
-    // Final step: the main DB. Its existence is the "fully complete" sentinel.
-    copyFile(oldDb, newDb);
+    // Final step: ONE consistent snapshot of the database. Its existence is the
+    // "fully complete" sentinel, and being a single self-contained file it
+    // cannot be half-present the way a .db/-wal/-shm trio could.
+    snapshotDb(oldDb, newDb);
   } catch (err) {
     log("migrate-state", "MIGRATION FAILED — leaving legacy state untouched", {
       from: oldDir,
