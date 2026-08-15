@@ -19,6 +19,7 @@ import {
   rmSync,
   copyFileSync,
 } from "fs";
+import { Database } from "bun:sqlite";
 import {
   migrateLegacyStateDir,
   resolveOldDefaultDir,
@@ -47,19 +48,46 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** Populate a legacy state dir with a full complement of files. */
-function seedLegacy(dir: string): void {
+/**
+ * Populate a legacy state dir with a full complement of files.
+ *
+ * The database is a REAL SQLite file. It used to be the string literal
+ * "MAIN-DB-BYTES" with "WAL-BYTES"/"SHM-BYTES" sidecars, which made these
+ * cases readable but meant the whole suite never once opened a database — so
+ * it could verify WHICH FILES moved and never WHETHER THE DATA SURVIVED. A
+ * live-source consistency bug sat under that blind spot; see
+ * migrate-state-consistency.test.ts, which is what caught it.
+ *
+ * Keep it a real database. These cases are about copy mechanics, but they can
+ * only stay honest if the thing being copied is the thing production copies.
+ */
+function seedLegacy(dir: string, marker = "LEGACY-ROW"): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "messages.db"), "MAIN-DB-BYTES");
-  writeFileSync(join(dir, "messages.db-wal"), "WAL-BYTES");
-  writeFileSync(join(dir, "messages.db-shm"), "SHM-BYTES");
+  const db = new Database(join(dir, "messages.db"));
+  db.exec("PRAGMA journal_mode = WAL;");
+  db.exec("CREATE TABLE messages (id INTEGER PRIMARY KEY, text TEXT);");
+  db.prepare("INSERT INTO messages (text) VALUES (?)").run(marker);
+  db.close();
   mkdirSync(join(dir, "attachments", "photos"), { recursive: true });
   writeFileSync(join(dir, "attachments", "photos", "a.jpg"), "IMG");
   writeFileSync(join(dir, "access.json"), '{"dmPolicy":"allowlist"}');
 }
 
+/** Read the seeded marker row back out of a store — proves the DATA travelled. */
+function readMarker(dbPath: string): string[] {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return db
+      .prepare("SELECT text FROM messages ORDER BY id")
+      .all()
+      .map((r: { text: string }) => r.text);
+  } finally {
+    db.close();
+  }
+}
+
 describe("migrateLegacyStateDir", () => {
-  test("(1) old-exists + new-absent copies db+wal+shm+attachments+access, renames to the new db, writes markers", () => {
+  test("(1) old-exists + new-absent snapshots the db + copies attachments+access, renames to the new db, writes markers", () => {
     // "telegram"/default agent → its OLD default is the bare dir.
     const oldDir = join(home, ".claude-code-telegrammer");
     seedLegacy(oldDir);
@@ -75,16 +103,22 @@ describe("migrateLegacyStateDir", () => {
     expect(res.migrated).toBe(true);
     expect(res.reason).toBe("migrated");
 
-    // Renamed onto the scitex-standard filename, content intact.
+    // Renamed onto the scitex-standard filename, DATA intact — read back
+    // through SQLite, because "the file arrived" and "the rows arrived" are
+    // different claims and only the second one matters.
+    expect(readMarker(join(newDir, "claude-code-telegrammer.db"))).toEqual([
+      "LEGACY-ROW",
+    ]);
+    // A VACUUM INTO snapshot is a SINGLE self-contained file. Sidecars are not
+    // copied any more and must not appear: shipping a -wal next to a snapshot
+    // recreates the ambiguity of a .db and a -wal captured at different
+    // instants, which is the bug this migration path had.
     expect(
-      readFileSync(join(newDir, "claude-code-telegrammer.db"), "utf8"),
-    ).toBe("MAIN-DB-BYTES");
+      existsSync(join(newDir, "claude-code-telegrammer.db-wal")),
+    ).toBe(false);
     expect(
-      readFileSync(join(newDir, "claude-code-telegrammer.db-wal"), "utf8"),
-    ).toBe("WAL-BYTES");
-    expect(
-      readFileSync(join(newDir, "claude-code-telegrammer.db-shm"), "utf8"),
-    ).toBe("SHM-BYTES");
+      existsSync(join(newDir, "claude-code-telegrammer.db-shm")),
+    ).toBe(false);
     // Attachments copied recursively + access.json copied.
     expect(
       readFileSync(join(newDir, "attachments", "photos", "a.jpg"), "utf8"),
@@ -103,9 +137,7 @@ describe("migrateLegacyStateDir", () => {
     expect(existsSync(join(oldDir, ".migrated-to"))).toBe(true);
 
     // COPY, not move — the legacy dir is left intact as a backup.
-    expect(readFileSync(join(oldDir, "messages.db"), "utf8")).toBe(
-      "MAIN-DB-BYTES",
-    );
+    expect(readMarker(join(oldDir, "messages.db"))).toEqual(["LEGACY-ROW"]);
   });
 
   test("(2) idempotent — a second run is a no-op and does not overwrite", () => {
@@ -114,7 +146,11 @@ describe("migrateLegacyStateDir", () => {
 
     migrateLegacyStateDir({ env: {}, home, newDir, now: FIXED, logFn: silent });
     // Mutate legacy so a (buggy) re-copy would be detectable.
-    writeFileSync(join(oldDir, "messages.db"), "CHANGED-AFTER-MIGRATION");
+    const legacy = new Database(join(oldDir, "messages.db"));
+    legacy
+      .prepare("INSERT INTO messages (text) VALUES (?)")
+      .run("CHANGED-AFTER-MIGRATION");
+    legacy.close();
 
     const res2 = migrateLegacyStateDir({
       env: {},
@@ -124,10 +160,11 @@ describe("migrateLegacyStateDir", () => {
     });
     expect(res2.migrated).toBe(false);
     expect(res2.reason).toBe("new-db-exists");
-    // The already-migrated new DB is untouched.
-    expect(
-      readFileSync(join(newDir, "claude-code-telegrammer.db"), "utf8"),
-    ).toBe("MAIN-DB-BYTES");
+    // The already-migrated new DB is untouched — it must NOT have picked up the
+    // row written to the legacy store after the migration completed.
+    expect(readMarker(join(newDir, "claude-code-telegrammer.db"))).toEqual([
+      "LEGACY-ROW",
+    ]);
   });
 
   test("(3) new-db-exists → no-op (never clobbers an existing new DB)", () => {
@@ -274,30 +311,32 @@ describe("migrateLegacyStateDir", () => {
   });
 
   test("(7b) a failure AFTER the DB copy but the DB present still re-runs cleanly (order sentinel)", () => {
-    // Prove the sentinel property end-to-end: fail on the FINAL .db copy, then
-    // a re-run (with a working copyFile) completes the migration.
+    // Prove the sentinel property end-to-end: fail on the FINAL db snapshot,
+    // then a re-run (with a working snapshot) completes the migration.
     const oldDir = join(home, ".claude-code-telegrammer");
     seedLegacy(oldDir);
 
     let calls = 0;
-    const failOnDb = (src: string, dst: string) => {
-      // The main DB is the last copyFile call; throw on it specifically.
-      if (dst.endsWith("claude-code-telegrammer.db"))
-        throw new Error("disk full");
+    const countCopies = (src: string, dst: string) => {
       calls++;
-      // Delegate real copies for the earlier (sidecar/access) steps.
       copyFileSync(src, dst);
+    };
+    // The DB no longer travels through copyFile — it is a VACUUM INTO snapshot,
+    // so the failure is injected on that step instead.
+    const failOnSnapshot = () => {
+      throw new Error("disk full");
     };
     expect(() =>
       migrateLegacyStateDir({
         env: {},
         home,
         newDir,
-        copyFile: failOnDb,
+        copyFile: countCopies,
+        snapshotDb: failOnSnapshot,
         logFn: silent,
       }),
     ).toThrow("disk full");
-    expect(calls).toBeGreaterThan(0); // sidecar/access copies DID run first
+    expect(calls).toBeGreaterThan(0); // access.json copy DID run first
     expect(existsSync(join(newDir, "claude-code-telegrammer.db"))).toBe(false);
     expect(existsSync(join(newDir, ".migrated-from"))).toBe(false);
 
@@ -310,9 +349,9 @@ describe("migrateLegacyStateDir", () => {
       logFn: silent,
     });
     expect(res.migrated).toBe(true);
-    expect(
-      readFileSync(join(newDir, "claude-code-telegrammer.db"), "utf8"),
-    ).toBe("MAIN-DB-BYTES");
+    expect(readMarker(join(newDir, "claude-code-telegrammer.db"))).toEqual([
+      "LEGACY-ROW",
+    ]);
   });
 });
 
