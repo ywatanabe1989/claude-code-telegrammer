@@ -87,6 +87,23 @@ function vacuumInto(srcDb: string, dstDb: string): void {
   }
 }
 
+/**
+ * Is this the "someone else already wrote the destination" error?
+ *
+ * `VACUUM INTO` refuses a destination that exists, so this is exactly what the
+ * LOSER of a startup race sees. Matched on the message because SQLite reports
+ * it as a generic SQLITE_ERROR with no distinguishing code — so this is a
+ * prose match, which is normally the wrong thing to do (see the 409 branch in
+ * poller.ts, which never ran for precisely that reason). It is acceptable here
+ * only because the failure is BENIGN and the fallback is conservative: if the
+ * match ever stops working we go back to throwing, which is the loud, current,
+ * safe behaviour — not to silently swallowing something worse.
+ */
+function isDestinationExistsError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /output file already exists/i.test(msg);
+}
+
 type LogFn = (
   component: string,
   msg: string,
@@ -122,7 +139,9 @@ export interface MigrateResult {
     | "explicit-state-dir"
     | "new-db-exists"
     | "old-db-absent"
-    | "already-migrated";
+    | "already-migrated"
+    /** Another process completed this same migration while we were copying. */
+    | "raced-by-other-process";
   newDir: string;
   oldDir: string | null;
 }
@@ -255,7 +274,36 @@ export function migrateLegacyStateDir(
     // Final step: ONE consistent snapshot of the database. Its existence is the
     // "fully complete" sentinel, and being a single self-contained file it
     // cannot be half-present the way a .db/-wal/-shm trio could.
-    snapshotDb(oldDb, newDb);
+    //
+    // LOSING A RACE HERE IS NOT A FAILURE. This function is called BARE, at top
+    // level with no try/catch, from BOTH ts/telegram-poller.ts and
+    // ts/telegram-server.ts, which can start together. The `existsSync(newDb)`
+    // guard above is a check-then-act, and the attachments copy sits inside its
+    // window — so the loser arrives here after the winner has written newDb, and
+    // `VACUUM INTO` refuses an existing destination.
+    //
+    // Rethrowing that would abort the poller's top-level bootstrap. JS cannot
+    // resume top-level execution after an uncaught exception, so startPolling()
+    // would never run and the poller would go SILENTLY INERT — the process
+    // stays alive, the uncaughtException handler only logs, and
+    // ensurePollerRunning's fire-and-forget spawn never checks back. That is
+    // the worst outcome available: inbound delivery dies quietly, on a failure
+    // that MEANS the work we wanted was already done by someone else.
+    //
+    // So treat it as the success it is — and SAY SO, because a swallowed error
+    // with no log is the silent fallback §2 forbids. Every other failure still
+    // throws.
+    try {
+      snapshotDb(oldDb, newDb);
+    } catch (err) {
+      if (!isDestinationExistsError(err)) throw err;
+      log(
+        "migrate-state",
+        "another process completed this migration while we were copying — carrying on (NOT an error; the destination is already populated)",
+        { from: oldDir, to: newDir, newDb },
+      );
+      return summarize("raced-by-other-process", oldDb, true, oldDbExists);
+    }
   } catch (err) {
     log("migrate-state", "MIGRATION FAILED — leaving legacy state untouched", {
       from: oldDir,
