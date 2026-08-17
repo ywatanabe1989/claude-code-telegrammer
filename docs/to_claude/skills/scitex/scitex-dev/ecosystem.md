@@ -192,7 +192,7 @@ scitex-dev ecosystem diff             # show remote diffs
 scitex-dev ecosystem fix-mismatches --dry-run
 scitex-dev ecosystem fix-mismatches
 
-# Dashboard
-scitex-dev ecosystem dashboard --port 8050
-scitex-dev ecosystem dashboard --background
+# Dashboard (`ecosystem dashboard` was removed in scitex-dev 0.51.0)
+scitex-dev gui open --port 8050
+scitex-dev gui open --background
 ```
