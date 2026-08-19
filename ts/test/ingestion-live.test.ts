@@ -94,9 +94,14 @@ describe("ingestion_live", () => {
     expect(c.ok).toBe(true);
   });
 
-  test("a DEAD poller is not this check's failure", () => {
-    // poller_alive owns that, and already fails on it. Reporting it twice
-    // makes one fault look like two and buries which one to fix.
+  test("a DEAD poller makes this check UNKNOWN, not ok and not failing", () => {
+    // The original rationale is unchanged and still right: poller_alive owns
+    // that failure, and reporting it twice makes one fault look like two.
+    //
+    // What changed is how "not my failure" is expressed. It used to be ok:true,
+    // which meant the summary counted it toward "14/15 checks ok" while the
+    // operator's channel was dead (2026-08-16). A check whose precondition
+    // failed has NO OPINION: not ok, not failing, listed under `unknown:`.
     const report = buildHealthReport(
       healthyInputs({
         now: NOW,
@@ -105,7 +110,11 @@ describe("ingestion_live", () => {
       }),
     );
 
-    expect(byName(report, "ingestion_live").ok).toBe(true);
+    const ingestion = byName(report, "ingestion_live");
+    expect(ingestion.ok).toBe(false); // no longer counted green
+    expect(ingestion.evaluated).toBe(false); // ...but not a failure either
+    expect(report.summary).toContain("unknown: ingestion_live");
+    expect(report.summary).not.toContain("FAILING: ingestion_live"); // still no double-report
     expect(byName(report, "poller_alive").ok).toBe(false); // the positive control
   });
 
