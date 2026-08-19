@@ -18,11 +18,16 @@ import {
   checkAuthority,
   isAuthoritative,
   releaseAuthoritative,
+  pollerPidfilePath,
 } from "./takeover.js";
 import { processBatch } from "./poller-batch.js";
 import { recordSuccessfulPoll, startStallWatchdog } from "./poll-watchdog.js";
 import { getenv } from "./env.js";
 import { broadcastSystemAlert } from "./loudfail.js";
+import {
+  startupConflictVerdict,
+  STARTUP_409_LIMIT,
+} from "./startup-conflict.js";
 
 /**
  * Max consecutive 409 Conflict responses we tolerate before declaring
@@ -57,12 +62,19 @@ export async function startPolling(): Promise<void> {
   //
   // Then call deleteWebhook (idempotent) — clears any leftover webhook
   // that would itself produce 409 on getUpdates.
+  // Whether we displaced a RECORDED predecessor decides how a startup 409 is
+  // read: our own predecessor may be draining a long-poll (wait), whereas a
+  // 409 with nobody in our pidfile means a FOREIGN consumer holds the token
+  // and nothing will yield (refuse). See lib/startup-conflict.ts.
+  let displacedLivePredecessor = false;
+
   try {
     const outgoing = claimAuthoritative({
       stateDir: STATE_DIR,
       tokenHash: BOT_TOKEN_HASH,
     });
     if (outgoing && outgoing.pid !== process.pid) {
+      displacedLivePredecessor = true;
       log(
         "poller",
         "preempted previous poller (newest wins) — wrote our PID to pidfile",
@@ -125,6 +137,7 @@ export async function startPolling(): Promise<void> {
   }
 
   let consecutive409 = 0;
+  let hasPolledSuccessfully = false;
 
   // Ingestion-stall watchdog: alarms LOUDLY if the process stays alive but
   // getUpdates stops returning (wedged long-poll / hung socket / network
@@ -210,6 +223,7 @@ export async function startPolling(): Promise<void> {
           allowed_updates: ["message", "message_reaction"],
         });
         consecutive409 = 0;
+        hasPolledSuccessfully = true;
         // Heartbeat: getUpdates RETURNED (regardless of update count — a
         // healthy long-poll returns at least every ~30s even with zero
         // updates). Stamps the in-process + persisted "last successful poll"
@@ -257,6 +271,41 @@ export async function startPolling(): Promise<void> {
             "poller",
             `409 Conflict on getUpdates (${consecutive409}/${MAX_CONSECUTIVE_409}) — backing off ${ERROR_BACKOFF_MS}ms (likely the previous poller is still draining its long-poll; it should exit on its next isAuthoritative() tick)`,
           );
+          // STARTUP REFUSAL, ahead of the long grace below.
+          //
+          // The 90s backoff exists for ONE case: our own predecessor draining
+          // its long-poll after we took its pidfile. When we displaced nobody
+          // there is no drain in flight, so waiting is not patience — it is
+          // the silence that let an operator talk to a deaf agent for 27
+          // minutes on 2026-08-16. Refuse while someone is still watching the
+          // restart, and exit NON-ZERO so a supervisor has a fact to act on.
+          if (
+            startupConflictVerdict({
+              displacedLivePredecessor,
+              hasPolledSuccessfully,
+              consecutive409,
+            }) === "refuse"
+          ) {
+            const refusal =
+              `REFUSING TO START: ${consecutive409} consecutive 409 Conflicts and we displaced NO prior poller — ` +
+              `another consumer already holds this bot token. ` +
+              `token=${BOT_TOKEN_HASH} state_dir=${STATE_DIR} our_pid=${process.pid} ` +
+              `pidfile=${pollerPidfilePath(STATE_DIR, BOT_TOKEN_HASH)}. ` +
+              "Each agent needs its OWN bot token. Find the other consumer (it is not one of ours — " +
+              "ours record themselves in the pidfile above) and stop it, then restart.";
+            log("poller", refusal);
+            void broadcastSystemAlert(refusal);
+            polling = false;
+            releaseAuthoritative({
+              stateDir: STATE_DIR,
+              tokenHash: BOT_TOKEN_HASH,
+            });
+            // Non-zero: a wedged poller looks alive to every liveness check we
+            // have, but an exit code is actionable.
+            process.exitCode = 1;
+            return;
+          }
+
           if (consecutive409 >= MAX_CONSECUTIVE_409) {
             const fatalMsg =
               `FATAL: ${MAX_CONSECUTIVE_409} consecutive 409 Conflicts — another process is polling this bot token and has NOT yielded after backoff. ` +
