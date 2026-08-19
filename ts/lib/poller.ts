@@ -9,7 +9,7 @@
  */
 
 import { tgApi, isConflictError } from "./telegram-api.js";
-import { loadAccess } from "./access.js";
+import { loadAccess, allowlistIsUsable } from "./access.js";
 import { log } from "./log.js";
 import { BOT_TOKEN_HASH, STATE_DIR } from "./config.js";
 import { saveOffset, loadOffset } from "./store.js";
@@ -110,16 +110,34 @@ export async function startPolling(): Promise<void> {
     });
   }
 
-  // Check allowlist at startup — fail loud if empty
+  // Check allowlist at startup — REFUSE if empty.
+  //
+  // This comment used to say "fail loud if empty" and the body only log()ed,
+  // then polled on. That is a declaration the code did not honour, and the
+  // consequence is not a noisy log: handle-update returns "ok" for a rejected
+  // message, poller-batch treats "ok" as durable, so the offset advances PAST
+  // every message we refuse. An empty allowlist therefore CONSUMES the
+  // operator's mail instead of holding it. Measured 2026-08-16: four of his
+  // updates rejected, offset advanced past all four, unrecoverable, resent by
+  // hand.
+  //
+  // Refusing a stranger is fine and still advances — otherwise a stranger's
+  // message is redelivered forever. But when NOTHING can be accepted, polling
+  // can only destroy, so we do not poll.
   const access = loadAccess();
-  if (
-    access.allowFrom.length === 0 &&
-    Object.keys(access.groups).length === 0
-  ) {
-    log(
-      "poller",
-      "ERROR: allowlist is empty — all messages will be rejected. Set CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS or create access.json in CLAUDE_CODE_TELEGRAMMER_STATE_DIR",
-    );
+  if (!allowlistIsUsable(access)) {
+    const refusal =
+      "REFUSING TO START: the allow list is empty — no user and no group is " +
+      "permitted, so every inbound message would be rejected AND consumed " +
+      "(the offset advances past rejections, making them unrecoverable). " +
+      `state_dir=${STATE_DIR}. Set CCT_ALLOWED_USERS (a.k.a. ` +
+      "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS) to your numeric telegram id, " +
+      `or create access.json in ${STATE_DIR}.`;
+    log("poller", refusal);
+    void broadcastSystemAlert(refusal);
+    // Non-zero, and BEFORE any getUpdates: nothing is consumed.
+    process.exitCode = 1;
+    return;
   }
 
   try {

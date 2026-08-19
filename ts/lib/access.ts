@@ -113,6 +113,26 @@ export function loadAccess(): Access {
   }
 }
 
+/**
+ * Could this allowlist EVER accept anything?
+ *
+ * False means no user is listed and no group policy exists — every inbound
+ * message will be rejected, no matter who sends it. That is not a strict
+ * filter, it is a closed door, and polling through a closed door destroys
+ * mail: handle-update returns "ok" for a rejection, so the offset advances
+ * past messages nobody will ever read.
+ *
+ * A group policy with an empty allowFrom is still USABLE — it grants the whole
+ * group. Treating that as unusable would break a legitimate group-only agent
+ * to fix a broken DM-only one.
+ */
+export function allowlistIsUsable(access: {
+  allowFrom: string[];
+  groups: Record<string, unknown>;
+}): boolean {
+  return access.allowFrom.length > 0 || Object.keys(access.groups).length > 0;
+}
+
 export function isAllowed(
   userId: string,
   chatId: string,
