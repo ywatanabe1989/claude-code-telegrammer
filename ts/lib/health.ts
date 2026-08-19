@@ -78,6 +78,18 @@ export interface HealthCheckEntry {
   ok: boolean;
   detail: string;
   hint: string | null;
+  /**
+   * Did this check actually RUN? Absent means yes (every pre-existing check).
+   *
+   * `false` marks the third value: the precondition failed, so the check has
+   * no opinion. It is neither ok nor failing. Measured 2026-08-16: two checks
+   * returned `ok` whose own detail said "not evaluated", and the summary
+   * counted them green while the operator's channel was dead.
+   *
+   * Distinct from `skipped: telegram disabled`, which is a deliberate config
+   * choice and genuinely not-applicable rather than unmeasured.
+   */
+  evaluated?: boolean;
 }
 
 export interface HealthReport {
@@ -249,13 +261,36 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
     checkCodeCurrent(inputs.codeCurrency),
   ];
 
+  return summarise(outcomes);
+}
+
+/**
+ * Turn check outcomes into the report, keeping THREE values apart.
+ *
+ * Extracted and exported so the counting itself is testable — the 2026-08-16
+ * defect was not in any individual check but in how they were tallied.
+ *
+ *   ok       evaluated and passed
+ *   unknown  did not evaluate (precondition failed) — no opinion
+ *   FAILING  evaluated and failed
+ *
+ * An unknown is deliberately NOT folded into either pole. Counting it green
+ * hides an outage (what happened); counting it red pages someone about a check
+ * that never ran. It gets its own place in the summary so a reader cannot
+ * mistake "we did not look" for "we looked and it was fine".
+ */
+export function summarise(outcomes: CheckOutcomeLike[]): HealthReport {
   const checks = outcomes.map((o) => o.entry);
+  const isUnknown = (e: HealthCheckEntry) => e.evaluated === false;
+
   // Top-level ok = AND of all NON-warn checks (shared contract). Warn-style
   // entries (tokenless bot_token_present, env_legacy nudge) are visible in
-  // `checks` but never flip the aggregate.
+  // `checks` but never flip the aggregate. Unknowns never flip it either —
+  // they are not failures.
   const failing = outcomes
-    .filter((o) => !o.warn && !o.entry.ok)
+    .filter((o) => !o.warn && !o.entry.ok && !isUnknown(o.entry))
     .map((o) => o.entry.name);
+  const unknown = outcomes.filter((o) => isUnknown(o.entry)).map((o) => o.entry.name);
   const warned = outcomes
     .filter((o) => o.warn && (o.entry.hint !== null || !o.entry.ok))
     .map((o) => o.entry.name);
@@ -263,6 +298,7 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
 
   const passed = checks.filter((c) => c.ok).length;
   const parts = [`${passed}/${checks.length} checks ok`];
+  if (unknown.length > 0) parts.push(`unknown: ${unknown.join(", ")}`);
   if (failing.length > 0) parts.push(`FAILING: ${failing.join(", ")}`);
   if (warned.length > 0) parts.push(`warnings: ${warned.join(", ")}`);
 
@@ -272,4 +308,10 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
     checks,
     summary: parts.join("; "),
   };
+}
+
+/** Structural shape of a check outcome (avoids a cycle with health-checks.ts). */
+export interface CheckOutcomeLike {
+  entry: HealthCheckEntry;
+  warn: boolean;
 }

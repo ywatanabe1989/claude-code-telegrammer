@@ -1,3 +1,4 @@
+import { unknownCheck } from "./health-checks.js";
 /**
  * `ingestion_live` — is anything actually ARRIVING?
  *
@@ -63,15 +64,16 @@ export function checkIngestionLive(
   // makes one fault look like two and buries which one to fix.
   const pollerAlive = poller.kind === "self" || poller.pidfileAlive;
   if (!pollerAlive) {
-    return ok(
-      "not evaluated — the poller process is not running (poller_alive " +
-        "reports that failure)",
+    return unknownCheck(
+      "ingestion_live",
+      "the poller process is not running (poller_alive reports that failure)",
     );
   }
 
   if (!db.exists || db.error !== undefined) {
-    return ok(
-      "not evaluated — the store could not be read (see db_schema_current)",
+    return unknownCheck(
+      "ingestion_live",
+      "the store could not be read (see db_schema_current)",
     );
   }
 
