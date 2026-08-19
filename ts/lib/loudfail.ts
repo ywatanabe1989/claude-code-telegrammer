@@ -4,9 +4,36 @@
  * When wakeTurn cannot deliver to /v1/turn (agent down / 401 /
  * quota-capped / connection refused / timeout / 5xx / etc.), the bridge
  * sends a Telegram reply to the operator on that bot explaining the
- * failure. Silence becomes impossible: every inbound either gets a
- * reply from the agent (success) or a loud-fail reply from the bridge
- * (failure).
+ * failure. Every inbound then gets EITHER a reply from the agent
+ * (success) OR a loud-fail reply from the bridge (failure).
+ *
+ * THOSE TWO BRANCHES ARE NOT EXHAUSTIVE, and this docstring used to claim
+ * they were ("silence becomes impossible"). There is a third outcome:
+ * DELIVERED SUCCESSFULLY, TO THE WRONG AGENT, SILENTLY.
+ *
+ * The turn bridge identifies its agent BY PORT NUMBER — its own route
+ * table documents the bare route as "(the port identifies the agent)" —
+ * so a bridge bound to a port that was since reallocated to someone else
+ * accepts the POST and returns 200. wakeTurn sees {ok:true, status:200},
+ * loudfail therefore never fires, and the agent the message was FOR never
+ * hears about it. Neither branch above covers that, and the mechanism
+ * built to make silence impossible is the one this case disables: the
+ * failure produces the exact signature of success.
+ *
+ * MEASURED 2026-08-19 on scitex-compute-04: scitex-cards posted turns to
+ * port 19003 while the bridge on 19003 was running scitex-agent-container's
+ * spec, and three of the operator's messages surfaced in the wrong
+ * session. A second instance (handyman-01 -> handyman-06 on 19000) was in
+ * the same measurement. Neither raised a loud-fail, because from cct's
+ * side both delivered fine.
+ *
+ * So read a 200 here as evidence of DELIVERY, never of delivery TO THE
+ * INTENDED AGENT. Closing the gap needs the named route
+ * (POST /agents/<name>/turn, which a foreign bridge 404s) plus a /health
+ * identity preflight to tell "wrong agent" apart from "bridge too old to
+ * serve that route" — both 404s otherwise. Tracked on card
+ * cct-loudfail-invariant-has-an-unhandled-third-branch-20260819;
+ * scitex-agent-container is removing the underlying port collision first.
  *
  * Wire shape (operator's revised spec 2026-06-07):
  *
