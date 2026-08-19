@@ -51,6 +51,26 @@ export function stopPolling(): void {
 export async function startPolling(): Promise<void> {
   log("poller", "starting getUpdates polling...");
 
+  const access = loadAccess();
+  if (!allowlistIsUsable(access)) {
+    const refusal =
+      "REFUSING TO START: the allow list is empty — no user and no group is " +
+      "permitted, so every inbound message would be rejected AND consumed " +
+      "(the offset advances past rejections, making them unrecoverable). " +
+      `state_dir=${STATE_DIR}. Set CCT_ALLOWED_USERS (a.k.a. ` +
+      "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS) to your numeric telegram id, " +
+      `or create access.json in ${STATE_DIR}.`;
+    log("poller", refusal);
+    void broadcastSystemAlert(refusal);
+    // Non-zero, and before ANY Telegram call at all: a refusing poller
+    // must not consume mail, must not claim the pidfile away from a live
+    // incumbent, and must not mutate remote state either. deleteWebhook
+    // used to run first — harmless for the offset, but a refusal that
+    // still tears down the webhook is not the no-op it claims to be.
+    process.exitCode = 1;
+    return;
+  }
+
   // ── Takeover preflight ──────────────────────────────────────────────
   //
   // "Newest wins" — claim authoritativeness for this bot token. If an
@@ -124,22 +144,7 @@ export async function startPolling(): Promise<void> {
   // Refusing a stranger is fine and still advances — otherwise a stranger's
   // message is redelivered forever. But when NOTHING can be accepted, polling
   // can only destroy, so we do not poll.
-  const access = loadAccess();
-  if (!allowlistIsUsable(access)) {
-    const refusal =
-      "REFUSING TO START: the allow list is empty — no user and no group is " +
-      "permitted, so every inbound message would be rejected AND consumed " +
-      "(the offset advances past rejections, making them unrecoverable). " +
-      `state_dir=${STATE_DIR}. Set CCT_ALLOWED_USERS (a.k.a. ` +
-      "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS) to your numeric telegram id, " +
-      `or create access.json in ${STATE_DIR}.`;
-    log("poller", refusal);
-    void broadcastSystemAlert(refusal);
-    // Non-zero, and BEFORE any getUpdates: nothing is consumed.
-    process.exitCode = 1;
-    return;
-  }
-
+ 
   try {
     const me = await tgApi("getMe");
     // Identity triple on the startup line: two agents sharing ONE bot
@@ -296,7 +301,12 @@ export async function startPolling(): Promise<void> {
           // there is no drain in flight, so waiting is not patience — it is
           // the silence that let an operator talk to a deaf agent for 27
           // minutes on 2026-08-16. Refuse while someone is still watching the
-          // restart, and exit NON-ZERO so a supervisor has a fact to act on.
+          // restart, and exit NON-ZERO. That exit code was
+          // inert when it was written: measured 2026-08-19, an ADOPTED poller's
+          // parent is the container init, which reaps and never respawns. It is
+          // real now only because startPollerSupervision() re-checks liveness on
+          // an interval; the alert below, not the exit code, is still what
+          // actually reaches a human.
           if (
             startupConflictVerdict({
               displacedLivePredecessor,
@@ -319,7 +329,9 @@ export async function startPolling(): Promise<void> {
               tokenHash: BOT_TOKEN_HASH,
             });
             // Non-zero: a wedged poller looks alive to every liveness check we
-            // have, but an exit code is actionable.
+            // have. Supervision will retry this a bounded number of times and then
+            // page — contention is often transient (a predecessor draining), and a
+            // permanent collision must end at a human, not in a retry loop.
             process.exitCode = 1;
             return;
           }
