@@ -47,7 +47,7 @@ import { registerTools } from "./lib/tools.js";
 import { initStore } from "./lib/store.js";
 import { migrateLegacyStateDir, ensureCctAlias } from "./lib/migrate-state.js";
 import { loadAccess } from "./lib/access.js";
-import { ensurePollerRunning } from "./lib/poller-supervisor.js";
+import { startPollerSupervision } from "./lib/poller-supervisor.js";
 import { startNotifyRelay } from "./lib/notify-relay.js";
 import { wakeEnabled } from "./lib/wake.js";
 import { resolveConfigProbe, wantsGetMe } from "./lib/config-probe.js";
@@ -411,7 +411,11 @@ log("server", "MCP server connected via stdio");
 // spawn a poller — the MCP stays connected but idle-disabled, matching the
 // loud WARN emitted above (honest status, no crash).
 if (TELEGRAM_ENABLED) {
-  ensurePollerRunning({
+  // Supervised, not fire-and-forget: the first check is immediate (same boot
+  // behaviour as the old one-shot call) and it then RE-checks on an interval,
+  // because a poller we merely ADOPT has no exit handle and nothing else on
+  // this host respawns it — measured, see lib/poller-supervisor.ts.
+  startPollerSupervision({
     stateDir: STATE_DIR,
     tokenHash: BOT_TOKEN_HASH,
     pollerScriptPath: join(import.meta.dir, "telegram-poller.ts"),

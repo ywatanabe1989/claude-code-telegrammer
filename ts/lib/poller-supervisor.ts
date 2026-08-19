@@ -256,7 +256,11 @@ export function ensurePollerRunning(
     // staleness (both timestamps known, code strictly newer). A failed stat
     // (0) or an unparseable startMs (0) leaves the incumbent ALONE — an
     // unnecessary respawn of a healthy poller is worse than a late deploy.
-    // This cannot loop: ensurePollerRunning runs once per MCP-server start.
+    // This cannot loop, though no longer because the call is one-shot:
+    // startPollerSupervision() below re-runs it on an interval. It converges
+    // instead — the takeover spawn's pidfile startMs is newer than the code
+    // mtime that triggered it, so the next tick reads isStale=false. Asserted
+    // in test/poller-supervision.test.ts, not merely reasoned about here.
     const codeMtimeMs = (
       deps.codeMtimeMs ?? (() => newestCodeMtimeMs(deps.pollerScriptPath))
     )();
@@ -505,4 +509,137 @@ function observePollerExit(
         error: String(err),
       });
     });
+}
+
+// ── Periodic supervision ─────────────────────────────────────────────────
+//
+// ensurePollerRunning() above runs ONCE per MCP-server start. That is enough to
+// supervise a poller THIS incarnation spawned: observePollerExit() holds its
+// `exited` handle and respawns it up to MAX_RESPAWNS. It is NOT enough for the
+// poller we ADOPT on the "already-running" path — that branch returns with no
+// handle and no observer — and adoption is the designed-NORMAL case, because
+// surviving an MCP-server restart is the entire point of the detached poller
+// (see ts/telegram-poller.ts). Every MCP restart after the first therefore
+// hands us a poller nobody is watching.
+//
+// MEASURED on this host 2026-08-19, rather than inferred from the code:
+//   - a live poller's parent is `appinit`, the apptainer container init. It
+//     reaps children; it never respawns them.
+//   - no systemd unit and no crontab entry matches telegram/cct.
+//   - ensurePollerRunning has exactly one call site (ts/telegram-server.ts).
+// So when an adopted poller dies, NOTHING replaces it: inbound Telegram
+// delivery stops and stays stopped until a human restarts the MCP server. That
+// is the "exits for respawn, nothing respawns it" defect.
+//
+// Re-asking on an interval is what closes it. The pidfile probe
+// ensurePollerRunning already performs IS the liveness question; asking it
+// repeatedly costs one /proc read per tick and needs no new component. The
+// alternative — an external supervisor — would itself be a thing that must be
+// verified alive at startup, which is the same problem one level up.
+export const SUPERVISION_INTERVAL_MS = 30_000;
+
+/**
+ * How many consecutive ticks may end in a spawn before supervision stops and
+ * pages instead.
+ *
+ * A healthy tick observes "already-running" and RESETS this counter, so a
+ * steady-state poller never approaches the cap however long it runs. Only a
+ * poller that dies faster than the interval can climb it — i.e. a crash loop —
+ * and that must page a human rather than respawn forever. Same reasoning, and
+ * same number, as MAX_RESPAWNS.
+ */
+export const MAX_SUPERVISION_SPAWNS = 5;
+
+export interface SupervisionState {
+  /** Consecutive ticks that had to spawn (reset by any healthy observation). */
+  consecutiveSpawns: number;
+  /** Once true, supervision has paged and stops acting. */
+  gaveUp: boolean;
+}
+
+export function initialSupervisionState(): SupervisionState {
+  return { consecutiveSpawns: 0, gaveUp: false };
+}
+
+/**
+ * Fold one ensurePollerRunning() result into the supervision state.
+ *
+ * Pure and separate from the timer on purpose — this is the DECISION, and it is
+ * unit-testable without waiting 30 real seconds, matching how the conditional
+ * spawn above is already factored.
+ */
+export function superviseTick(
+  state: SupervisionState,
+  result: EnsurePollerResult,
+  maxSpawns: number = MAX_SUPERVISION_SPAWNS,
+): { state: SupervisionState; alert?: string } {
+  if (state.gaveUp) return { state };
+
+  // A live poller is the healthy outcome whether we adopted it or our own
+  // previous tick produced it. Either way the rail is up: forget the history.
+  if (result.action === "already-running") {
+    return { state: { consecutiveSpawns: 0, gaveUp: false } };
+  }
+
+  const consecutiveSpawns = state.consecutiveSpawns + 1;
+  if (consecutiveSpawns >= maxSpawns) {
+    const why =
+      result.action === "spawn-failed"
+        ? `the last spawn failed outright (${result.error})`
+        : "each spawned poller died before the next check";
+    return {
+      state: { consecutiveSpawns, gaveUp: true },
+      alert:
+        `GIVING UP ON THE POLLER: ${consecutiveSpawns} consecutive supervision ticks had to start one and ` +
+        `${why}. Inbound Telegram delivery is DOWN and this process will stop trying — ` +
+        "a crash loop must page a human, not respawn forever. Check the poller log, then restart the MCP server.",
+    };
+  }
+  return { state: { consecutiveSpawns, gaveUp: false } };
+}
+
+/**
+ * Start supervising the standalone poller for the life of this MCP server.
+ *
+ * Replaces the old one-shot ensurePollerRunning() call: the FIRST check still
+ * runs immediately, so boot behaviour and start latency are unchanged, and only
+ * the re-checks are new.
+ *
+ * Convergence with the STALE-CODE TAKEOVER branch above deserves a word, since
+ * that branch's comment used to rely on "this cannot loop: ensurePollerRunning
+ * runs once per MCP-server start" — a premise this function removes. It still
+ * cannot loop, for a different reason: a stale incumbent is replaced by a spawn
+ * whose pidfile startMs is NEWER than the code mtime that triggered it, so the
+ * very next tick reads isStale=false and takes the already-running path. One
+ * takeover, not one per tick. That is asserted by test, not by this paragraph.
+ */
+export function startPollerSupervision(
+  deps: EnsurePollerDeps,
+  opts: {
+    intervalMs?: number;
+    maxSpawns?: number;
+    ensure?: (d: EnsurePollerDeps) => EnsurePollerResult;
+  } = {},
+): { stop: () => void } {
+  const intervalMs = opts.intervalMs ?? SUPERVISION_INTERVAL_MS;
+  const ensure = opts.ensure ?? ensurePollerRunning;
+  const logFn = deps.logFn ?? log;
+  let state = initialSupervisionState();
+
+  const tick = (): void => {
+    if (state.gaveUp) return;
+    const next = superviseTick(state, ensure(deps), opts.maxSpawns);
+    state = next.state;
+    if (next.alert) {
+      logFn("poller-supervisor", next.alert);
+      void broadcastSystemAlert(next.alert);
+    }
+  };
+
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  // Never hold the process open on supervision's account — the MCP stdio
+  // connection owns lifetime here, and a live interval would outlive it.
+  (timer as unknown as { unref?: () => void }).unref?.();
+  return { stop: () => clearInterval(timer) };
 }
