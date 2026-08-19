@@ -32,6 +32,35 @@ export interface CheckOutcome {
   warn: boolean;
 }
 
+/**
+ * A check that could NOT run because its precondition failed.
+ *
+ * Neither ok nor failing: it has no opinion. `ok:false` keeps it out of the
+ * passed count, `evaluated:false` keeps it out of FAILING, and the summary
+ * lists it under `unknown:` so it cannot be read as either.
+ */
+export function unknownCheck(
+  name: string,
+  why: string,
+  hint = "This check has no opinion — resolve the cause above, then re-run `health`.",
+): CheckOutcome {
+  return {
+    entry: {
+      name,
+      ok: false,
+      evaluated: false,
+      detail: `not evaluated — ${why}`,
+      // ALWAYS carry a hint. `ok:false` is what a consumer keying only on that
+      // field sees, and an entry that looks like a failure while offering no
+      // next step is the thing the fail-loud contract exists to prevent. The
+      // hint says what an unknown means, so the entry explains itself whether
+      // the reader understands `evaluated` or not.
+      hint,
+    },
+    warn: false,
+  };
+}
+
 /** Detail used for checks skipped because telegram is disabled (no token). */
 export const SKIPPED_DISABLED_DETAIL = "skipped: telegram disabled (no token)";
 

@@ -1,3 +1,4 @@
+import { unknownCheck } from "./health-checks.js";
 /**
  * `inbound_recency` — WHEN did the last inbound message actually land?
  *
@@ -118,8 +119,9 @@ export function checkInboundRecency(
   if (poller === null) return skippedDisabled("inbound_recency");
 
   if (!db.exists || db.error !== undefined) {
-    return report(
-      "not evaluated — the store could not be read (see db_schema_current)",
+    return unknownCheck(
+      "inbound_recency",
+      "the store could not be read (see db_schema_current)",
     );
   }
 
@@ -127,6 +129,10 @@ export function checkInboundRecency(
   // skip, not fail. Absent and null mean different things and are kept apart:
   // absent ⇔ nobody asked, null ⇔ asked and the store holds no inbound row.
   if (db.newestInboundMs === undefined) {
+    // Absent ⇔ nobody asked; null ⇔ asked and there is no row. "Nobody asked"
+    // is a statement about the CALLER's capability, not about system health,
+    // so it is a skip — not an unknown. Making it unknown would degrade every
+    // older adapter's report for a question it never posed.
     return report("not evaluated — the probe did not report inbound recency");
   }
   if (db.newestInboundMs === null) {

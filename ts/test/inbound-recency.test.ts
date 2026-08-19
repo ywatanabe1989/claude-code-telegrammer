@@ -129,7 +129,10 @@ describe("inbound_recency is three-valued about its own inputs", () => {
     expect(entry.detail).toContain("did not report inbound recency");
   });
 
-  test("an unreadable store defers to db_schema_current", () => {
+  test("an unreadable store is UNKNOWN, deferring to db_schema_current", () => {
+    // Deferring is still right — db_schema_current owns the read failure. But
+    // a disk I/O error means we genuinely CANNOT know inbound recency, and
+    // saying ok would have reported a dead channel as green.
     const entry = byName(
       buildHealthReport({
         ...healthyInputs(),
@@ -138,7 +141,8 @@ describe("inbound_recency is three-valued about its own inputs", () => {
       }),
       "inbound_recency",
     );
-    expect(entry.ok).toBe(true);
+    expect(entry.ok).toBe(false);
+    expect(entry.evaluated).toBe(false);
     expect(entry.detail).toContain("db_schema_current");
   });
 
