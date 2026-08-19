@@ -51,6 +51,26 @@ export function stopPolling(): void {
 export async function startPolling(): Promise<void> {
   log("poller", "starting getUpdates polling...");
 
+  const access = loadAccess();
+  if (!allowlistIsUsable(access)) {
+    const refusal =
+      "REFUSING TO START: the allow list is empty — no user and no group is " +
+      "permitted, so every inbound message would be rejected AND consumed " +
+      "(the offset advances past rejections, making them unrecoverable). " +
+      `state_dir=${STATE_DIR}. Set CCT_ALLOWED_USERS (a.k.a. ` +
+      "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS) to your numeric telegram id, " +
+      `or create access.json in ${STATE_DIR}.`;
+    log("poller", refusal);
+    void broadcastSystemAlert(refusal);
+    // Non-zero, and before ANY Telegram call at all: a refusing poller
+    // must not consume mail, must not claim the pidfile away from a live
+    // incumbent, and must not mutate remote state either. deleteWebhook
+    // used to run first — harmless for the offset, but a refusal that
+    // still tears down the webhook is not the no-op it claims to be.
+    process.exitCode = 1;
+    return;
+  }
+
   // ── Takeover preflight ──────────────────────────────────────────────
   //
   // "Newest wins" — claim authoritativeness for this bot token. If an
@@ -124,22 +144,7 @@ export async function startPolling(): Promise<void> {
   // Refusing a stranger is fine and still advances — otherwise a stranger's
   // message is redelivered forever. But when NOTHING can be accepted, polling
   // can only destroy, so we do not poll.
-  const access = loadAccess();
-  if (!allowlistIsUsable(access)) {
-    const refusal =
-      "REFUSING TO START: the allow list is empty — no user and no group is " +
-      "permitted, so every inbound message would be rejected AND consumed " +
-      "(the offset advances past rejections, making them unrecoverable). " +
-      `state_dir=${STATE_DIR}. Set CCT_ALLOWED_USERS (a.k.a. ` +
-      "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS) to your numeric telegram id, " +
-      `or create access.json in ${STATE_DIR}.`;
-    log("poller", refusal);
-    void broadcastSystemAlert(refusal);
-    // Non-zero, and BEFORE any getUpdates: nothing is consumed.
-    process.exitCode = 1;
-    return;
-  }
-
+ 
   try {
     const me = await tgApi("getMe");
     // Identity triple on the startup line: two agents sharing ONE bot
