@@ -11,7 +11,8 @@
 import { tgApi, isConflictError } from "./telegram-api.js";
 import { loadAccess, allowlistIsUsable } from "./access.js";
 import { log } from "./log.js";
-import { BOT_TOKEN_HASH, STATE_DIR } from "./config.js";
+import { BOT_TOKEN_HASH, STATE_DIR, TURN_URL, AGENT_ID } from "./config.js";
+import { checkBridgeIdentity } from "./turn-identity.js";
 import { saveOffset, loadOffset } from "./store.js";
 import {
   claimAuthoritative,
@@ -69,6 +70,47 @@ export async function startPolling(): Promise<void> {
     // still tears down the webhook is not the no-op it claims to be.
     process.exitCode = 1;
     return;
+  }
+
+  // ── Turn-bridge identity preflight ──────────────────────────────────
+  //
+  // The bridge we POST inbound turns to identifies its agent BY PORT — its
+  // own route table documents the bare route as "(the port identifies the
+  // agent)". A bridge holding a port that was since reallocated ACCEPTS the
+  // POST and returns 200, so wakeTurn sees success, loudfail never fires,
+  // and every inbound lands in another agent's session. Measured live on
+  // 2026-08-19: three agents misrouted this way for hours, unremarked,
+  // because the failure produces the exact signature of success.
+  //
+  // Checked ONCE here rather than per message. The wake is fire-and-forget
+  // (handle-update.ts: `void wakeTurn(...)`), so a per-message round-trip
+  // would delay EVERY inbound by the health timeout — a safety check that
+  // slows the path it protects is the wrong shape.
+  //
+  // UNKNOWN PROCEEDS. An older bridge, an unreachable /health, malformed
+  // JSON — none of those are evidence of a wrong bridge, and refusing on
+  // them would turn version skew into an outage. Only a POSITIVE mismatch
+  // stops us, which is the same three-valued rule the doctor uses.
+  //
+  // Note this refusal is DELIVERABLE, unlike the allowlist one above:
+  // broadcastSystemAlert sends via the Telegram Bot API, which never
+  // traverses the turn bridge, so the operator hears about it even though
+  // the inbound rail is the thing that is broken.
+  if (TURN_URL.trim() !== "") {
+    const identity = await checkBridgeIdentity(TURN_URL, AGENT_ID);
+    if (identity.verdict === "not-ours") {
+      const refusal =
+        `REFUSING TO START: the turn bridge at ${TURN_URL} serves ` +
+        `"${identity.reported}", not "${AGENT_ID}". Its port was reallocated ` +
+        "and a stale bridge still holds it, so every inbound message would be " +
+        "POSTed successfully into the WRONG agent's session and no failure " +
+        "would be reported. Stop the stale bridge (or let the supervisor " +
+        "reallocate) and restart.";
+      log("poller", refusal);
+      void broadcastSystemAlert(refusal);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   // ── Takeover preflight ──────────────────────────────────────────────
