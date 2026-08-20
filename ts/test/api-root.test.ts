@@ -14,6 +14,8 @@ import {
   DEFAULT_API_ROOT,
   TelegramApiBaseError,
   API_ROOT,
+  isLoopbackHost,
+  apiRootExposure,
 } from "../lib/api-root.js";
 import { API_BASE, FILE_BASE } from "../lib/config.js";
 
@@ -143,5 +145,97 @@ describe("resolveApiRoot — refusals are LOUD and name the variable + value", (
       }
       expect(`${value} threw=${threw}`).toBe(`${value} threw=true`);
     }
+  });
+});
+
+describe("isLoopbackHost — what counts as 'never leaves this machine'", () => {
+  test("the WHOLE 127.0.0.0/8 block, not just 127.0.0.1", () => {
+    for (const h of ["127.0.0.1", "127.0.0.53", "127.5.5.5", "127.255.255.254"]) {
+      expect(`${h}=${isLoopbackHost(h)}`).toBe(`${h}=true`);
+    }
+  });
+
+  test("localhost, its RFC 6761 subdomains, and IPv6 in both spellings", () => {
+    for (const h of [
+      "localhost",
+      "LOCALHOST",
+      "api.localhost",
+      "::1",
+      "[::1]", // WHATWG URL.hostname returns IPv6 BRACKETED
+      "0:0:0:0:0:0:0:1",
+    ]) {
+      expect(`${h}=${isLoopbackHost(h)}`).toBe(`${h}=true`);
+    }
+  });
+
+  test("a PRIVATE LAN address is NOT loopback — this is deliberate", () => {
+    // 192.168/10./172.16 are "internal", not "local". Plaintext to them still
+    // crosses a wire other machines are on, which is the whole risk. If anyone
+    // later widens isLoopbackHost to cover RFC1918 "because it is internal",
+    // this test is what should stop them: it silences the warning for exactly
+    // the case it exists to catch.
+    for (const h of ["192.168.1.5", "10.0.0.1", "172.16.0.9"]) {
+      expect(`${h}=${isLoopbackHost(h)}`).toBe(`${h}=false`);
+    }
+  });
+
+  test("near-misses that must NOT pass as loopback", () => {
+    for (const h of [
+      "1270.0.0.1", //          not in 127./8 at all
+      "127.0.0.1.evil.com", //  suffix attack on an unanchored match
+      "notlocalhost", //        substring, not the name
+      "localhost.evil.com", //  the label must END the name
+      "example.com",
+    ]) {
+      expect(`${h}=${isLoopbackHost(h)}`).toBe(`${h}=false`);
+    }
+  });
+});
+
+describe("apiRootExposure — the three cases the startup log must tell apart", () => {
+  test("unset default is 'default'; an https override is 'encrypted'", () => {
+    expect(apiRootExposure(DEFAULT_API_ROOT)).toBe("default");
+    expect(apiRootExposure("https://telegram.example.internal")).toBe(
+      "encrypted",
+    );
+    // https to LOOPBACK is still just encrypted — the scheme is what matters.
+    expect(apiRootExposure("https://127.0.0.1:8081")).toBe("encrypted");
+  });
+
+  test("plaintext to loopback is its OWN case, not a warning", () => {
+    // This is the case the seam was built for: a real poller pointed at a real
+    // local server. Folding it in with remote plaintext would fire the warning
+    // on every test run, and a warning that always fires gets switched off.
+    for (const r of [
+      "http://127.0.0.1:8081",
+      "http://localhost:8081",
+      "http://[::1]:8081",
+    ]) {
+      expect(`${r}=${apiRootExposure(r)}`).toBe(`${r}=loopback-plaintext`);
+    }
+  });
+
+  test("plaintext to anywhere else is 'remote-plaintext'", () => {
+    for (const r of [
+      "http://telegram.example.internal",
+      "http://192.168.1.5:8081", //  LAN counts
+      "http://203.0.113.7:8081", //  public counts
+    ]) {
+      expect(`${r}=${apiRootExposure(r)}`).toBe(`${r}=remote-plaintext`);
+    }
+  });
+
+  test("an unparseable root reports the WORST case, not a reassuring one", () => {
+    // resolveApiRoot already refuses these, so arriving here means the value
+    // bypassed it. Guessing "encrypted" would be a silent all-clear.
+    expect(apiRootExposure("not a url")).toBe("remote-plaintext");
+  });
+
+  test("the live API_ROOT is classified, and under test it is not remote", () => {
+    // A control: proves these assertions run against the real resolved value
+    // and not only against literals.
+    expect(["default", "encrypted", "loopback-plaintext"]).toContain(
+      apiRootExposure(API_ROOT),
+    );
   });
 });

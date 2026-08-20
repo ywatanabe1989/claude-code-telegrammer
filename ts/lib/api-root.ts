@@ -131,6 +131,56 @@ export function resolveApiRoot(
   return trimmed.replace(/\/+$/, "");
 }
 
+/**
+ * Loopback is the only place plaintext http is unremarkable: the bytes never
+ * leave the machine. A LAN address, a VPN peer or a public host all put them
+ * on a wire something else can be sitting on.
+ *
+ * Exported and pure for the same reason resolveApiRoot is: it decides a
+ * security-relevant log line, and a decision like that must be testable
+ * without setting an env var and restarting a process.
+ */
+export function isLoopbackHost(hostname: string): boolean {
+  // WHATWG URL returns IPv6 hosts BRACKETED — new URL("http://[::1]").hostname
+  // is "[::1]", not "::1" — so strip them before comparing.
+  const h = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (h === "localhost" || h.endsWith(".localhost")) return true; // RFC 6761
+  if (h === "::1" || h === "0:0:0:0:0:0:0:1") return true;
+  // The whole 127.0.0.0/8 block, not just 127.0.0.1 — 127.5.5.5 is equally
+  // local, and a test server bound there is equally unremarkable.
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/** How exposed a resolved root leaves the bot token. */
+export type ApiRootExposure =
+  | "default" //             the real Telegram API, https
+  | "encrypted" //           an override, but https
+  | "loopback-plaintext" //  http to this machine — the test / self-host case
+  | "remote-plaintext"; //   http to somewhere else — the token is in the clear
+
+/**
+ * Three-valued rather than a boolean "is it safe": "loopback-plaintext" is the
+ * case this seam EXISTS to serve (a real poller pointed at a real 127.0.0.1
+ * server), so collapsing it together with remote plaintext would make the
+ * warning fire on every test run and be switched off within a week.
+ */
+export function apiRootExposure(root: string): ApiRootExposure {
+  if (root === DEFAULT_API_ROOT) return "default";
+  let url: URL;
+  try {
+    url = new URL(root);
+  } catch {
+    // resolveApiRoot already refuses unparseable roots, so reaching here means
+    // the value came from somewhere that did not go through it. Report the
+    // worst case rather than a reassuring one.
+    return "remote-plaintext";
+  }
+  if (url.protocol === "https:") return "encrypted";
+  return isLoopbackHost(url.hostname)
+    ? "loopback-plaintext"
+    : "remote-plaintext";
+}
+
 export const API_ROOT = resolveApiRoot();
 
 // One line, at startup, only when the override is actually in force. A
@@ -143,5 +193,25 @@ if (API_ROOT !== DEFAULT_API_ROOT) {
       `traffic (and this bot's token) goes to ${API_ROOT}, NOT ` +
       `${DEFAULT_API_ROOT}`,
     { apiRoot: API_ROOT },
+  );
+}
+
+// A SECOND line, for the ONE case the line above cannot distinguish. That one
+// says WHERE the token is going; this one says it is going there IN THE CLEAR.
+// Those are different facts, and a reader who needs the second must not have to
+// infer it from a scheme buried in a URL they are being shown for another
+// reason. Only remote plaintext warns: loopback plaintext is the case this seam
+// was built for, and a warning that fires on every test run gets switched off.
+if (apiRootExposure(API_ROOT) === "remote-plaintext") {
+  log(
+    "config",
+    `WARNING: the Telegram API root is UNENCRYPTED http:// to a NON-LOOPBACK ` +
+      `host (${API_ROOT}). The bot token travels in the REQUEST PATH — ` +
+      `"/bot<token>/<method>" — so it sits in the request line itself, where ` +
+      `proxies, caches and access logs along that route RECORD it. This is ` +
+      `not only a passive-listener risk. Use https, or a loopback address, ` +
+      `unless every hop on this network is one you trust with a credential ` +
+      `that controls this bot.`,
+    { apiRoot: API_ROOT, exposure: "remote-plaintext" },
   );
 }
