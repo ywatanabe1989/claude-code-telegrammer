@@ -49,7 +49,13 @@ function childEnv(
     // cannot collide with a short alias (getenv throws on disagreement).
     CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR: stateDir,
     CLAUDE_CODE_TELEGRAMMER_BOT_TOKEN: SEAM_TOKEN,
-    CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS: "",
+    // A REAL id, not "": the poller REFUSES TO START on an empty allowlist,
+    // because every inbound would be rejected AND consumed. That refusal
+    // landed after this fixture was written, so "" quietly turned the
+    // spawn test into a 20s timeout — the poller exited before sending a
+    // single getUpdates. The value is irrelevant to what these tests
+    // observe (they watch EGRESS); it only has to be non-empty.
+    CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS: "424242",
     CCT_TELEGRAM_API_BASE: apiBase,
   };
 }
