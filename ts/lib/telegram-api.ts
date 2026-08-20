@@ -2,7 +2,7 @@
  * Thin wrapper around the Telegram Bot API (raw fetch, no grammy).
  */
 
-import { API_BASE, TOKEN, MAX_TEXT } from "./config.js";
+import { API_BASE, FILE_BASE, MAX_TEXT } from "./config.js";
 import { appendSignature } from "./signature.js";
 import { mkdirSync, readFileSync } from "fs";
 import { join, basename, extname } from "path";
@@ -249,7 +249,11 @@ export async function downloadFile(
   localDir: string,
   fileName?: string,
 ): Promise<string> {
-  const url = `https://api.telegram.org/file/bot${TOKEN}/${filePath}`;
+  // FILE_BASE, not a second hardcoded literal: file downloads use a different
+  // path shape from the method base, and building it here is how the API-root
+  // override (lib/api-root.ts) ended up covering only 4 of 5 egress sites in
+  // every earlier sketch of this seam.
+  const url = `${FILE_BASE}/${filePath}`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Failed to download file: ${res.status} ${res.statusText}`);

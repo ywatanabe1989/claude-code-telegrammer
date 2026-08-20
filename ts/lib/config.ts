@@ -5,6 +5,17 @@
 import { homedir, hostname } from "os";
 import { join } from "path";
 import { getenv, READ_PREFIXES } from "./env.js";
+import { API_ROOT } from "./api-root.js";
+
+// Re-exported so lib/api-root.ts stays discoverable from the module everything
+// already imports configuration from, without every consumer learning a second
+// path. The override contract itself is documented in lib/api-root.ts.
+export {
+  API_ROOT,
+  DEFAULT_API_ROOT,
+  TelegramApiBaseError,
+  resolveApiRoot,
+} from "./api-root.js";
 
 // Make an AGENT_ID safe as a single path segment: collapse any run of
 // characters outside [A-Za-z0-9._-] (notably "/") to one "-" so an exotic id
@@ -77,7 +88,18 @@ export const ATTACHMENT_DIR =
   getenv("ATTACHMENT_DIR") ?? join(STATE_DIR, "attachments");
 
 export const TOKEN = getenv("BOT_TOKEN") ?? "";
-export const API_BASE = `https://api.telegram.org/bot${TOKEN}`;
+
+// Both Telegram URL bases are derived from ONE root (lib/api-root.ts), which
+// is where the CCT_TELEGRAM_API_BASE override and its validation live. With
+// that override unset, API_ROOT is "https://api.telegram.org" and both strings
+// below are byte-identical to the hardcoded literals they replaced.
+//
+// FILE_BASE is a SEPARATE path shape (/file/bot<token>/<path>, GET, no method
+// suffix) used only by telegram-api::downloadFile, which previously built its
+// own literal. Deriving it here is what makes the redirect total instead of
+// partial.
+export const API_BASE = `${API_ROOT}/bot${TOKEN}`;
+export const FILE_BASE = `${API_ROOT}/file/bot${TOKEN}`;
 export const MAX_TEXT = 4096;
 
 export const ENV_ALLOWED = (getenv("ALLOWED_USERS") ?? "")
