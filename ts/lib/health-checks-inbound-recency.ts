@@ -45,12 +45,43 @@ import { skippedDisabled, type CheckOutcome } from "./health-checks.js";
  * How long the store may go without a new inbound message before the report
  * says so out loud.
  *
- * Seven days is chosen to be longer than any plausible quiet stretch for an
- * agent whose operator uses it at all, and far shorter than the fourteen days
- * this went unnoticed. It is a NUDGE threshold, not a failure threshold — see
- * the warn-style note above — so erring long costs visibility, not correctness.
+ * 24 HOURS, CHOSEN FROM THE DISTRIBUTION rather than from intuition.
+ *
+ * The previous value was SEVEN DAYS, justified here as "longer than any
+ * plausible quiet stretch for an agent whose operator uses it at all". That
+ * reasoning was never checked against data, and when it finally was
+ * (2026-08-23, 2532 inter-arrival gaps across the six live stores on
+ * compute-04 that hold inbound rows) it turned out to be true in the worst
+ * possible way:
+ *
+ *     p50   1m      p95    1.1h        7d fires on   0 / 2532   (0.00%)
+ *     p75   4m      p99    9.1h       24h fires on   9 / 2532   (0.36%)
+ *     p90  24m      p99.9  3.9d       max observed gap: 6.0d
+ *
+ * Seven days sat ABOVE THE LARGEST GAP EVER RECORDED. Not "generous" —
+ * outside the observed range entirely, so it could not fire on anything that
+ * had ever happened. That is §2's gate-that-cannot-fail wearing warn-style
+ * clothes: a nudge that cannot nudge.
+ *
+ * And the 6.0d maximum is very likely not a healthy quiet at all. It belongs
+ * to scitex-hub, whose inbound was dead for six days — the outage this check
+ * exists to surface, sitting one day under the threshold meant to surface it.
+ *
+ * 24h clears p99 (9.1h) with room and fires on 0.36% of gaps: roughly one or
+ * two events per store across their entire lifetimes. Still a NUDGE, not a
+ * failure — see the warn-style note above, it never flips the report's
+ * top-level `ok` — so the cost of firing is one visible line, and the cost of
+ * NOT firing was six days of silence nobody was told about.
+ *
+ * BEFORE CHANGING THIS, RE-MEASURE. The number that was wrong here was wrong
+ * because it was reasoned about rather than counted, and a replacement chosen
+ * the same way would deserve the same fate. The measurement is one query over
+ * `messages.created_at`; see the card below for the method (WAL replay, and
+ * empty stores reported as unreadable rather than as quiet).
+ *
+ * Card: cct-409-limit-counts-consecutive-not-rate-and-health-asserts-liveness-20260822
  */
-export const INBOUND_QUIET_WARN_MS = 604_800_000;
+export const INBOUND_QUIET_WARN_MS = 86_400_000;
 
 const DAY_MS = 86_400_000;
 
