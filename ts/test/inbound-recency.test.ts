@@ -85,6 +85,35 @@ describe("inbound_recency reports the age of the newest stored message", () => {
     expect(entryFor(dbWithInbound(INBOUND_QUIET_WARN_MS)).ok).toBe(true);
     expect(entryFor(dbWithInbound(INBOUND_QUIET_WARN_MS + 1)).ok).toBe(false);
   });
+
+  /**
+   * The boundary test above is SYMBOLIC — it reads the constant, so it passes
+   * at ANY value, including the seven days that could not fire on anything
+   * that had ever happened. A suite that cannot see a wrong threshold is how
+   * the wrong threshold survived from 2026-08-11 to 2026-08-23.
+   *
+   * So the VALUE is pinned, with the evidence, and a future change has to
+   * argue with the measurement rather than edit past it.
+   *
+   *   2532 inter-arrival gaps, six live stores, compute-04, 2026-08-23
+   *     p99 9.1h   p99.9 3.9d   max 6.0d
+   *     24h fires on 9/2532 (0.36%)      7d fired on 0/2532 (0.00%)
+   */
+  test("the threshold is 24h and sits inside the measured distribution", () => {
+    expect(INBOUND_QUIET_WARN_MS).toBe(86_400_000);
+
+    // Above p99 (9.1h) — ordinary quiet must not trip it.
+    expect(INBOUND_QUIET_WARN_MS).toBeGreaterThan(9.1 * 3_600_000);
+
+    // Below the largest gap ever observed (6.0d) — a threshold above the
+    // maximum cannot fire on anything real, which is what seven days was.
+    expect(INBOUND_QUIET_WARN_MS).toBeLessThan(6.0 * 86_400_000);
+  });
+
+  test("a six-day inbound outage now warns, where seven days never did", () => {
+    // scitex-hub's actual outage. Under the old threshold this reported ok.
+    expect(entryFor(dbWithInbound(6 * DAY)).ok).toBe(false);
+  });
 });
 
 describe("the cursor is conclusive one way only", () => {
