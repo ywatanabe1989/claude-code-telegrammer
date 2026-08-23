@@ -62,19 +62,34 @@ function humanAge(ms: number): string {
 }
 
 /**
- * IDLE vs LOSSY, the distinction a stale timestamp alone cannot make.
+ * The cursor, and the ASYMMETRY that makes it useful in only one direction.
  *
- * getUpdates advances the offset only over updates the poller ACKNOWLEDGED.
- * So the cursor's position relative to the newest update actually stored is
- * the discriminator:
+ * getUpdates advances the offset only over updates the poller ACKNOWLEDGED,
+ * so the cursor's position relative to the newest STORED row says something —
+ * but it says much more one way than the other:
  *
- *   offset == max_stored + 1   every delivered update is in the store. A long
- *                              quiet is then genuinely a quiet channel.
- *   offset >  max_stored + 1   updates were acknowledged and never stored —
- *                              real loss, and the case worth waking someone.
+ *   offset == max_stored + 1   CONCLUSIVE. Every update Telegram delivered is
+ *                              in the store, so a long quiet is a genuinely
+ *                              quiet channel. This is what settled the
+ *                              2026-08-11 scitex-storage case in one glance.
+ *   offset >  max_stored + 1   NOT CONCLUSIVE, and emphatically not proof of
+ *                              loss. update_id advances for reactions, edits,
+ *                              chat-member changes and messages from senders
+ *                              outside the allowlist — none of which becomes a
+ *                              stored row. A chat anyone reacts to grows this
+ *                              gap on its own, forever.
  *
- * Derived by hand at 06:00 on 2026-08-11 to tell those apart; it belongs in
- * the check so nobody has to derive it again.
+ * THIS DOCSTRING USED TO SAY A GAP WAS "real loss, and the case worth waking
+ * someone", and the hint below told a reader the same thing. That was WRONG,
+ * and it contradicted `db_schema_current` in this same report, which had
+ * already measured the false positive: scitex-hub, 2026-08-11, gap 1355,
+ * reported implausible, ingestion demonstrably live. Chasing it leads to
+ * resetting update_offset, which re-delivers up to 24h of Telegram's backlog —
+ * messages the operator has already read. Only a gap of MILLIONS is diagnostic,
+ * and `db_schema_current` owns that branch (POISONED_OFFSET_GAP).
+ *
+ * So this function REPORTS the gap and refuses to interpret it. The number is
+ * worth showing; the conclusion was not ours to draw.
  */
 function describeCursor(
   updateOffset: number | null,
@@ -90,7 +105,8 @@ function describeCursor(
   if (gap > 0) {
     return (
       `cursor AHEAD by ${gap} (offset ${updateOffset}, max stored ` +
-      `${maxUpdateId}) — that many updates were acknowledged but not stored`
+      `${maxUpdateId}) — expected: reactions, edits and non-allowlisted ` +
+      "senders advance update_id without becoming rows"
     );
   }
   return (
@@ -155,14 +171,20 @@ export function checkInboundRecency(
         hint:
           "read it beside ingestion_live: polls fresh AND nothing stored for " +
           "days is the shape a silent outage makes — and also the shape a " +
-          "genuinely idle channel makes. The CURSOR is what separates them. " +
-          "offset == max_stored+1 means the cursor is idle: every update " +
-          "Telegram ever sent is in the store, and the quiet is real. A GAP " +
-          "(offset > max_stored+1) means updates were acknowledged and never " +
-          "stored — that is loss, and it is the one that needs you. " +
-          "Measured 2026-08-11 on scitex-storage: 14 days quiet, 14/14 green, " +
-          "and the cursor said idle — the operator had simply moved to " +
-          "another channel, one message before the silence began.",
+          "genuinely idle channel makes. The cursor settles ONE of those and " +
+          "not the other. offset == max_stored+1 is CONCLUSIVE: every update " +
+          "Telegram ever sent is in the store, so the quiet is real and " +
+          "nothing is wrong. Measured 2026-08-11 on scitex-storage — 14 days " +
+          "quiet, 14/14 green, cursor idle — the operator had simply moved to " +
+          "another channel, one message before the silence began. A GAP " +
+          "(offset > max_stored+1) proves NOTHING on its own and is not " +
+          "evidence of loss: reactions, edits and non-allowlisted senders all " +
+          "advance update_id without becoming rows, so this number grows by " +
+          "itself on any chat someone reacts to. Do NOT reset update_offset " +
+          "on the strength of it — that re-delivers up to 24h of backlog the " +
+          "operator has already read. db_schema_current owns the only gap " +
+          "large enough to be diagnostic. To tell quiet from dead when the " +
+          "cursor is not idle, send yourself a message and watch for the row.",
       },
       // WARN-style on purpose: a genuinely idle agent must not read as
       // unhealthy. Visible in `checks`, never in the aggregate. A check that
