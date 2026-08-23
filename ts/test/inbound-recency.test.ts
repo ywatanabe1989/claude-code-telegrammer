@@ -87,17 +87,54 @@ describe("inbound_recency reports the age of the newest stored message", () => {
   });
 });
 
-describe("inbound_recency separates an idle cursor from a lossy one", () => {
+describe("the cursor is conclusive one way only", () => {
   test("offset == max_stored + 1 reads as idle", () => {
     expect(entryFor(dbWithInbound(14 * DAY, 0)).detail).toContain(
       "cursor idle",
     );
   });
 
-  test("offset ahead of max_stored names the count of lost updates", () => {
+  test("offset ahead of max_stored reports the gap without calling it loss", () => {
     const detail = entryFor(dbWithInbound(14 * DAY, 7)).detail;
     expect(detail).toContain("cursor AHEAD by 7");
-    expect(detail).toContain("acknowledged but not stored");
+    // The number is worth showing. The conclusion was never ours to draw:
+    // update_id advances for reactions, edits, and non-allowlisted senders,
+    // none of which becomes a stored row.
+    expect(detail).toContain("expected");
+    expect(detail).not.toContain("acknowledged but not stored");
+  });
+
+  /**
+   * REGRESSION GUARD, and the reason this file changed.
+   *
+   * The hint is the text someone follows mid-incident, and it used to say a
+   * gap "is loss, and it is the one that needs you" — contradicting
+   * db_schema_current in the same report, which had already measured that
+   * false positive on scitex-hub (gap 1355, ingestion demonstrably live) and
+   * recorded that acting on it re-delivers 24h of already-read backlog.
+   *
+   * These assertions fail against develop. That is the point: a green suite
+   * that cannot see a wrong hint is how the wrong hint survived.
+   */
+  test("the quiet-channel hint never presents a gap as evidence of loss", () => {
+    const entry = entryFor(dbWithInbound(INBOUND_QUIET_WARN_MS + 1, 7));
+    const hint = entry.hint ?? "";
+    expect(hint).toContain("proves NOTHING on its own");
+    expect(hint).not.toContain("that is loss");
+  });
+
+  test("the hint warns against the remedy that re-delivers read backlog", () => {
+    const hint = entryFor(dbWithInbound(INBOUND_QUIET_WARN_MS + 1, 7)).hint ?? "";
+    expect(hint).toContain("Do NOT reset update_offset");
+    expect(hint).toContain("24h");
+  });
+
+  test("the hint still states what the idle cursor DOES settle", () => {
+    // Narrowing the gap claim must not cost the half that was measured and
+    // correct — offset == max_stored+1 is what resolved 2026-08-11 in a glance.
+    const hint = entryFor(dbWithInbound(INBOUND_QUIET_WARN_MS + 1, 0)).hint ?? "";
+    expect(hint).toContain("CONCLUSIVE");
+    expect(hint).toContain("scitex-storage");
   });
 
   test("offset behind max_stored is reported rather than silently ignored", () => {
