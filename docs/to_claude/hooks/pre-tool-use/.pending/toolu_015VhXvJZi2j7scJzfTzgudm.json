@@ -1,4 +1,0 @@
-{
-  "stage": "--data-urlencode \"url=https://scitex-orochi.com/webhook/telegram/\" \\",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

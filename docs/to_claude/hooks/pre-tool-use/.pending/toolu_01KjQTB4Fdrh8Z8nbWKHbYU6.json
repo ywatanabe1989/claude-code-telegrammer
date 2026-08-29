@@ -1,4 +1,0 @@
-{
-  "stage": "screen -S head-ywata-note-win -X stuff $'\\003' 2>/dev/null",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

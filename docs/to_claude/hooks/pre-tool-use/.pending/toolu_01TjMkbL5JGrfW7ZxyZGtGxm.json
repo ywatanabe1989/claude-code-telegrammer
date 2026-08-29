@@ -1,4 +1,0 @@
-{
-  "stage": "screen -S scitex-orochi -X hardcopy /tmp/orochi-screen3.txt",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

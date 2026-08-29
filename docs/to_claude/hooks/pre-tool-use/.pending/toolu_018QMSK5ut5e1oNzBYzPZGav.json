@@ -1,4 +1,0 @@
-{
-  "stage": "bun run telegram-server.ts  &  PID=$!",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

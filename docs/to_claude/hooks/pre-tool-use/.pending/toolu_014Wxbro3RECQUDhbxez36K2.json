@@ -1,4 +1,0 @@
-{
-  "stage": "screen -dm -S head-ywata-note-win bash -l -c \"cd ~/.scitex/orochi/workspaces/head-ywata-note-win",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

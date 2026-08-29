@@ -60,7 +60,7 @@ runs its own bot, its own message store, and fails loud on misconfiguration.
 <tr valign="top">
   <td align="center">4</td>
   <td><h4>Only 3 basic tools</h4>The official plugin provides just send, get_updates, and set_reaction — no history, no search, no file handling, no message editing.</td>
-  <td><h4>10 MCP tools</h4>reply, react, edit_message, get_history, get_unread, mark_read, download_attachment, send_document, search_messages, get_context — everything an autonomous agent needs.</td>
+  <td><h4>11 MCP tools</h4>reply, react, edit_message, get_history, get_unread, mark_read, download_attachment, send_document, search_messages, get_context, health — everything an autonomous agent needs.</td>
 </tr>
 <tr valign="top">
   <td align="center">5</td>

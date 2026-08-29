@@ -1,4 +1,0 @@
-{
-  "stage": "feat: add Django webhook endpoint for Telegram (POST /webhook/telegram)",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

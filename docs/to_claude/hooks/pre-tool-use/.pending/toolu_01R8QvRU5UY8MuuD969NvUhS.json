@@ -1,4 +1,0 @@
-{
-  "stage": "from mcp.shared.context import RequestContext",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

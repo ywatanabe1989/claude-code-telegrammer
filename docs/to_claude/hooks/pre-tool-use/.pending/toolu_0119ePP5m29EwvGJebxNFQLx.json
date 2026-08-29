@@ -1,4 +1,0 @@
-{
-  "stage": "from hub.registry import get_all_agents, remove_agent",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

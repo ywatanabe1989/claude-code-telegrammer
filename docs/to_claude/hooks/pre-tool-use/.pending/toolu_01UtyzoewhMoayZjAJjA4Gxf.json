@@ -1,4 +1,0 @@
-{
-  "stage": "fix: define httpBase in mcp_channel.ts (fixes message delivery crash)",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

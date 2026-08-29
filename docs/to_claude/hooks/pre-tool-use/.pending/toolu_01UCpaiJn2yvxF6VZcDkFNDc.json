@@ -1,4 +1,0 @@
-{
-  "stage": "feat: auto-generate .mcp.json from orochi YAML config at agent start",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

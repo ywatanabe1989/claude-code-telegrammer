@@ -1,4 +1,0 @@
-{
-  "stage": "fix: connect MCP stdio before WebSocket (fixes idle notification race)",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

@@ -1,4 +1,0 @@
-{
-  "stage": "claude --model opus --dangerously-skip-permissions --dangerously-load-development-channels server:scitex-orochi'\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

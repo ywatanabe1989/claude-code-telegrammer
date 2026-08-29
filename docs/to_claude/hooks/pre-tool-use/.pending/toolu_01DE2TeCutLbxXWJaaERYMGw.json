@@ -1,4 +1,0 @@
-{
-  "stage": "s=Session.objects.first()",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

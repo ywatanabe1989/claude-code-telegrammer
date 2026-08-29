@@ -1,4 +1,0 @@
-{
-  "stage": "screen -S head-ywata-note-win -X hardcopy /tmp/head-trust.txt",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

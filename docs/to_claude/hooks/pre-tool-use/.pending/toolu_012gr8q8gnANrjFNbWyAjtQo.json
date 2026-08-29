@@ -1,4 +1,0 @@
-{
-  "stage": "msg=\"Found it: lead telegram env vars unexpanded, 6 pollers running literal token, Telegram comms down. Token itself is valid, fix is re-sourcing .env\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

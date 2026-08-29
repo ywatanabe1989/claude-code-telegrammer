@@ -129,7 +129,7 @@ If the message does not arrive, check:
 Available MCP Tools
 -------------------
 
-Once the server is running, Claude Code has access to 10 tools:
+Once the server is running, Claude Code has access to 11 tools:
 
 .. list-table::
    :header-rows: 1
@@ -158,6 +158,9 @@ Once the server is running, Claude Code has access to 10 tools:
      - Full-text search across all stored messages.
    * - ``get_context``
      - Recent conversation formatted as compact text for LLM context.
+   * - ``health``
+     - Run the health check (doctor) inside the server process; returns the
+       JSON report.
 
 Next Steps
 ----------

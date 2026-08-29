@@ -1,4 +1,0 @@
-{
-  "stage": "msg=\"PR 26 merged to develop: fail-loud env guard, all CI green across python 3.10-3.12 and bun, pulled to local. Telegram junk-dir bug fixed at the bridge.\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

@@ -1,4 +1,0 @@
-{
-  "stage": "from hub.models import Agent",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

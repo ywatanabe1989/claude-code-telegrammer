@@ -1,4 +1,0 @@
-{
-  "stage": "Dashboard WebSocket at /ws/dashboard/ is rejected with AnonymousUser even after login. This blocks all message delivery from dashboard to agents.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

@@ -43,3 +43,9 @@ build/
 # source.
 __pycache__/
 *.py[cod]
+
+# Hook scratch. `hooks/pre-tool-use/.pending/` is a per-invocation staging area
+# the pre-tool-use hooks write and then reap; 432 of these `toolu_*.json` files
+# had been committed under docs/to_claude/, carrying verbatim copies of whatever
+# command was being screened at the time. That is machine scratch, never source.
+.pending/

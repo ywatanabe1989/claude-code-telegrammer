@@ -1,4 +1,0 @@
-{
-  "stage": "screen -dmS e2e-telegrammer bash -c 'cd /tmp/claude-code-telegrammer-e2e",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

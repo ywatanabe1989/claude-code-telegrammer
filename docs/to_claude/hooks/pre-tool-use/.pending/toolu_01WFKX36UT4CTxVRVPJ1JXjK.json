@@ -1,4 +1,0 @@
-{
-  "stage": "then git -C ~/proj/scitex-agent-container pull origin develop",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

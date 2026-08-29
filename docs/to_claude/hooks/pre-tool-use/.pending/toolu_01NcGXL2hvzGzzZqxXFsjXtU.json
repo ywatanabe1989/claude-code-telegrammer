@@ -1,4 +1,0 @@
-{
-  "stage": "fix: show error banner on WebSocket auth failure (no silent fallback)",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

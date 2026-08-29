@@ -1,4 +1,0 @@
-{
-  "stage": "screen -S head-ywata-note-win -X stuff 'You have pending channel messages that arrived while you were idle. Check your channel notifications and respond to any messages from ywatanabe in #general. After responding, continue waiting for new messages.\\r'",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

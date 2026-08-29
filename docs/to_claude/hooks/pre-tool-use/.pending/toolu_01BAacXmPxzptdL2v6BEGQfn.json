@@ -1,4 +1,0 @@
-{
-  "stage": "fix: include AGENT, CHANNELS, TOKEN in generated .mcp.json",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

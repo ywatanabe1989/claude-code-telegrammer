@@ -1,4 +1,0 @@
-{
-  "stage": "Multiple network paths exist between machines (LAN, SSH mesh/reverse tunnels, WAN API). Agents should be aware of available routes and pick the best one automatically.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

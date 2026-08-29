@@ -1,4 +1,0 @@
-{
-  "stage": "bun build mcp_channel.ts --target=node --outfile /dev/null",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

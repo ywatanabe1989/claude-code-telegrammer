@@ -1,4 +1,0 @@
-{
-  "stage": "- **409 fail-fast**: Preflight check (timeout=3) at startup detects competing pollers. Stops immediately with agent notification instead of retrying forever.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

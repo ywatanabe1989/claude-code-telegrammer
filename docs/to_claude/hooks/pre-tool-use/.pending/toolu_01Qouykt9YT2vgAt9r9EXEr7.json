@@ -1,4 +1,0 @@
-{
-  "stage": "strings /tmp/e2e-screen.txt",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

@@ -1,4 +1,0 @@
-{
-  "stage": "import scitex_orochi\" /tmp/scitex-orochi/src --include=\"*.py\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

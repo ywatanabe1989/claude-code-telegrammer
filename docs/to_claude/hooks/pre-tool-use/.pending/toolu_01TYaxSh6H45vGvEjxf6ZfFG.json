@@ -1,4 +1,0 @@
-{
-  "stage": "When agents fail to connect, disconnect, or have config errors, there's no visible feedback in the orochi dashboard. Users see silence and don't know what's wrong.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}
