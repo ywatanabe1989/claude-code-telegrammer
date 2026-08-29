@@ -127,7 +127,7 @@ flowchart LR
         direction TB
         srv["telegram-server.ts<br/>(Bun MCP server)"]
         gate{"allowlist gate<br/>CCT_ALLOWED_USERS<br/>+ access.json"}
-        db[("state dir · per-agent<br/>messages.db · lock<br/>CCT_AGENT_STATE_DIR")]
+        db[("state dir · per-agent<br/>claude-code-telegrammer.db · lock<br/>CCT_AGENT_STATE_DIR")]
         cc["Claude Code<br/>(the agent)"]
         srv -->|inbound| gate
         gate -->|"allowed → channel notification"| cc

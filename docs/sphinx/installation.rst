@@ -52,8 +52,8 @@ MCP Server
      - Telegram Bot API token from BotFather.
    * - ``CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR``
      - No
-     - ``~/.claude-code-telegrammer``
-     - Directory for SQLite DB, access.json, and lock file.
+     - ``~/.scitex/claude-code-telegrammer/runtime/<agent_id>``
+     - Directory for the message DB, access.json, and lock file.
    * - ``CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS``
      - No
      - --
