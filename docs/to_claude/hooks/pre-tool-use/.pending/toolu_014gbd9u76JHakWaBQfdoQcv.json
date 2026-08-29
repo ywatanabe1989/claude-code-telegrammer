@@ -1,4 +1,0 @@
-{
-  "stage": "print(json.load(sys.stdin)['version'])\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

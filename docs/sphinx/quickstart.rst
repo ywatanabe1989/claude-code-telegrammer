@@ -52,7 +52,7 @@ Then edit ``.mcp.json`` with your values:
           "env": {
             "CLAUDE_CODE_TELEGRAMMER_BOT_TOKEN": "123456789:AAH...",
             "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS": "YOUR_TELEGRAM_USER_ID",
-            "CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR": "~/.claude-code-telegrammer"
+            "CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR": "~/.scitex/claude-code-telegrammer/runtime/telegram"
           }
         }
       }
@@ -129,7 +129,7 @@ If the message does not arrive, check:
 Available MCP Tools
 -------------------
 
-Once the server is running, Claude Code has access to 10 tools:
+Once the server is running, Claude Code has access to 11 tools:
 
 .. list-table::
    :header-rows: 1
@@ -158,6 +158,9 @@ Once the server is running, Claude Code has access to 10 tools:
      - Full-text search across all stored messages.
    * - ``get_context``
      - Recent conversation formatted as compact text for LLM context.
+   * - ``health``
+     - Run the health check (doctor) inside the server process; returns the
+       JSON report.
 
 Next Steps
 ----------

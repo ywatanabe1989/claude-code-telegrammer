@@ -1,4 +1,0 @@
-{
-  "stage": "fix: set SESSION_COOKIE_SECURE=True for HTTPS (fixes WS auth)",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

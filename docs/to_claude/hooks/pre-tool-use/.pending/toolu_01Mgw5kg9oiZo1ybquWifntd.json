@@ -1,4 +1,0 @@
-{
-  "stage": "msg=\"Cleanup done: killed 6 broken pollers, removed 9 junk dirs, fail-loud guard verified (253 tests pass). Now discussing convention-based state dir like dot-scitex\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

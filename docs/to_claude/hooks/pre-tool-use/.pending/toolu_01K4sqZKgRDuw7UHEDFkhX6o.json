@@ -1,4 +1,0 @@
-{
-  "stage": "SCITEX_OROCHI_TELEGRAM_WEBHOOK_SECRET=DCFcusEP5Ph8BfseyhY89d3Ufv7mvNUz6JOfR0cZsNU docker compose -f docker-compose.stable.yml build\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

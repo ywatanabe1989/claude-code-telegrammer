@@ -1,4 +1,0 @@
-{
-  "stage": "screen -S scitex-orochi -X stuff 'Please work on the following tasks for scitex-orochi:\\n\\n1. Add list-agents command: scan ~/.scitex/orochi/agents/ and list all agent YAMLs with name, role, machine, status\\n2. Test agent connectivity: try launching master agent from YAML, verify it connects to orochi WebSocket\\n3. Verify the webhook is working: check scitex-orochi.com/webhook/telegram/ receives messages\\n\\nRelevant issues: todo#173 (status/health CLI), orochi#8 (token ownership - closed), orochi#9 (bidirectional dep - closed)\\n\\nThe YAML configs are at ~/.scitex/orochi/agents/*/\\r'",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

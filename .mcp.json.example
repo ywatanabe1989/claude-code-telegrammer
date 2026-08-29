@@ -8,7 +8,7 @@
       "env": {
         "CLAUDE_CODE_TELEGRAMMER_BOT_TOKEN": "123456789:AAH...",
         "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS": "YOUR_TELEGRAM_USER_ID",
-        "CLAUDE_CODE_TELEGRAMMER_STATE_DIR": "~/.claude-code-telegrammer"
+        "CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR": "~/.scitex/claude-code-telegrammer/runtime/telegram"
       }
     }
   }

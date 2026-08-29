@@ -1,4 +1,0 @@
-{
-  "stage": "import { chromium } from '/Users/ywatanabe/.npm/_npx/9833c18b2d85bc59/node_modules/playwright/index.mjs'",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

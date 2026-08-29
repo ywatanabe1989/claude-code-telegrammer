@@ -1,4 +1,0 @@
-{
-  "stage": "print(version('claude-code-telegrammer'))\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

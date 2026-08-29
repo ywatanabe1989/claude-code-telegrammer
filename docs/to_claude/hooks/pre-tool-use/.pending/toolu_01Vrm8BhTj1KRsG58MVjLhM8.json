@@ -1,4 +1,0 @@
-{
-  "stage": "Add `status` and `health` CLI commands to scitex-agent-container, similar to Docker's `docker ps` / `docker healthcheck`.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

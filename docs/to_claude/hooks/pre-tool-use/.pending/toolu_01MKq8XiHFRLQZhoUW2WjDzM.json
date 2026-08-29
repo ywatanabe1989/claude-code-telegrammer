@@ -1,4 +1,0 @@
-{
-  "stage": "screen -S head-ywata-note-win -X stuff 'You missed messages. Check #general and respond. After responding, use /loop 30s to check for new messages every 30 seconds.\\r'",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

@@ -1,4 +1,0 @@
-{
-  "stage": "import scitex_agent_container\" src/ --include=\"*.py\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

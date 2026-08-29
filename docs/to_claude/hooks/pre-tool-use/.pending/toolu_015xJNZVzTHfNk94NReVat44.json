@@ -1,4 +1,0 @@
-{
-  "stage": "Resolved. The bridge is disabled by default (`SCITEX_OROCHI_TELEGRAM_BRIDGE_ENABLED` defaults to `false` in `_config.py:49`).",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

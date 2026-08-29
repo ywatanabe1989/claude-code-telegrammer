@@ -1,4 +1,0 @@
-{
-  "stage": "rm -rf /tmp/claude-code-telegrammer-e2e",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

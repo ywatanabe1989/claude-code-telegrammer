@@ -11,7 +11,7 @@ counts as unset.
 | Variable (`CCT_…` / `CLAUDE_CODE_TELEGRAMMER_…`) | Required | Default | Description |
 |---|---|---|---|
 | `BOT_TOKEN` | To enable | — | Telegram Bot API token. Empty/absent → telegram **disabled** (loud `[WARN]`, MCP still connects, no poller — not a crash). Present-but-invalid → **fail loud** (`getMe` 401/404). |
-| `AGENT_STATE_DIR` | No | `~/.claude-code-telegrammer` (or `-<agent_id>`) | **Per-agent** state dir override (SQLite DB, access.json, lock). The old `…_STATE_DIR` name is renamed and rejected at startup — unset it. |
+| `AGENT_STATE_DIR` | No | `~/.scitex/claude-code-telegrammer/runtime/<agent_id>` (`agent_id` defaults to `telegram`) | **Per-agent** state dir override (message DB, access.json, lock). The old `…_STATE_DIR` name is renamed and rejected at startup — unset it. |
 | `ALLOWED_USERS` | No | — | Comma-separated Telegram user IDs for the DM allowlist. |
 | `AGENT_ID` | No | `telegram` | Per-agent identity; also derives the default state dir (see below). |
 | `HOST_NAME` | No | `os.hostname()` | Hostname stored with each message. |
@@ -23,14 +23,15 @@ counts as unset.
 
 Each agent runs its **own** Telegram bot (own `CCT_BOT_TOKEN`) and gets its own
 isolated state so multiple agents on one host never collide on the poller
-pidfile / `messages.db`:
+pidfile / `claude-code-telegrammer.db`:
 
 - Set `CCT_AGENT_ID` per agent → the state dir derives to
-  `~/.claude-code-telegrammer-<agent_id>` automatically. **This is the preferred
-  path** — do not hand-set `CCT_AGENT_STATE_DIR` unless you need a non-standard
-  location.
-- Leave `CCT_AGENT_ID` unset (or `telegram`) → the shared base
-  `~/.claude-code-telegrammer` (e.g. a single interactive bridge).
+  `~/.scitex/claude-code-telegrammer/runtime/<agent_id>` automatically. **This
+  is the preferred path** — do not hand-set `CCT_AGENT_STATE_DIR` unless you
+  need a non-standard location.
+- Leave `CCT_AGENT_ID` unset → `agent_id` defaults to `telegram`, i.e.
+  `~/.scitex/claude-code-telegrammer/runtime/telegram` (e.g. a single
+  interactive bridge).
 
 In the SciTeX fleet, tokens are injected per agent via each project's `.envrc`
 (e.g. `export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_<AGENT>"`), and the shared
@@ -52,7 +53,7 @@ loud at startup rather than running with a junk value.
       "env": {
         "CLAUDE_CODE_TELEGRAMMER_BOT_TOKEN": "123456789:AAH...",
         "CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS": "YOUR_TELEGRAM_USER_ID",
-        "CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR": "~/.claude-code-telegrammer"
+        "CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR": "~/.scitex/claude-code-telegrammer/runtime/telegram"
       }
     }
   }

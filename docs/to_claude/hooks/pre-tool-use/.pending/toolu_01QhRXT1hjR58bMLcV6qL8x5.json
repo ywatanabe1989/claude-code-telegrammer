@@ -1,4 +1,0 @@
-{
-  "stage": "from django.contrib.auth import get_user_model",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

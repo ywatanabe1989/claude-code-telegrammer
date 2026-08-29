@@ -1,4 +1,0 @@
-{
-  "stage": "Docker provides `docker ps`, `docker inspect`, `docker healthcheck` for container inspection. scitex-agent-container has `start` and `stop` but lacks equivalent status/health commands.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

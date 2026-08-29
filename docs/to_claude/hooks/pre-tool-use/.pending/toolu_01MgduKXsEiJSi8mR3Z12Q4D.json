@@ -1,4 +1,0 @@
-{
-  "stage": "- **feat**: Telegram webhook endpoint (`POST /webhook/telegram/`) with secret token verification",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

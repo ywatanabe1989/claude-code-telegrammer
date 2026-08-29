@@ -1,4 +1,0 @@
-{
-  "stage": "screen -S head-ywata-note-win -X stuff 'Check #general for any new messages and respond.\\r'",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

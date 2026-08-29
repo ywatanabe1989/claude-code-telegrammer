@@ -14,7 +14,7 @@ silently, since inbound Telegram delivery had no process of its own. Now:
 
 | Process | Entrypoint | Responsibility |
 |---------|------------|----------------|
-| MCP server | `ts/telegram-server.ts` | MCP stdio transport, the 10 tools, ensures a poller is running |
+| MCP server | `ts/telegram-server.ts` | MCP stdio transport, the 11 tools, ensures a poller is running |
 | Poller | `ts/telegram-poller.ts` | Telegram `getUpdates` long-poll, inbound delivery — fully independent of the MCP server |
 
 The MCP server does not run the poll loop itself. At startup (and on every
@@ -34,7 +34,7 @@ the poller's pidfile. The two processes share internal modules (`ts/lib/`):
 | `notify-relay` | Cross-process inbound live-push relay for interactive-CLI (`!wakeEnabled()`) mode — poller writes, MCP server reads+delivers |
 | `loudfail` | Direct-Telegram-API alarms/replies that must work whether or not the agent/mcp side is reachable |
 | `store` | SQLite (WAL) message persistence + dedup + read/replied tracking; opened independently by both processes |
-| `tools` | The 10 MCP tools (see [interfaces](interfaces.md)) — MCP-server process only |
+| `tools` | The 11 MCP tools (see [interfaces](interfaces.md)) — MCP-server process only |
 | `attachments` | Background download queue for inbound files |
 | `access` | Allowlist gating (`access.json` + `CCT_ALLOWED_USERS`), mtime-cached |
 | `config` / `env` | Env-var resolution (see [configuration](configuration.md)) |
@@ -150,7 +150,11 @@ Throttled: minimum inter-response interval, burst limit (10 in 3s), same-state d
 
 ## SQLite schema (v2)
 
-All messages persist in `$CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR/messages.db` (WAL mode).
+All messages persist in
+`$CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR/claude-code-telegrammer.db` (WAL
+mode). The file was renamed from the original `messages.db` when the state dir
+moved under `~/.scitex/`; `lib/migrate-state.ts` copies a legacy `messages.db`
+onto the new name once, at startup, so history is carried forward.
 
 - **messages** — direction, chat_id, message_id, user_id, username, text,
   timestamps (telegram_ts, received_at, read_at, replied_at), threading
@@ -171,6 +175,6 @@ scitex-orochi          — agent definitions, dashboard
         ↓
 scitex-agent-container — lifecycle, health, restart, per-agent .envrc + .mcp.json
         ↓
-claude-code-telegrammer — MCP server (Telegram API, message DB, 10 tools)
+claude-code-telegrammer — MCP server (Telegram API, message DB, 11 tools)
                           + standalone poller process + TUI watchdog
 ```

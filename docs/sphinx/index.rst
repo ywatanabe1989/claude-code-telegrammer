@@ -114,7 +114,7 @@ Architecture
         v
     Custom Telegram MCP Server (ts/telegram-server.ts)
         Bun + @modelcontextprotocol/sdk
-        Poller | SQLite Store | 10 MCP Tools | Attachments
+        Poller | Message Store | 11 MCP Tools | Attachments
         Access Control | Config (env vars) | PID Lock
         |
         | MCP stdio

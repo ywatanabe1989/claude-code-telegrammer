@@ -1,4 +1,0 @@
-{
-  "stage": "Channel notifications via scitex-orochi MCP server are sent successfully (log shows \"notification sent OK\") but Claude Code TUI does not display them when idle at the prompt.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

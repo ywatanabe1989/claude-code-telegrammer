@@ -1,4 +1,0 @@
-{
-  "stage": "pgrep -fa 'telegram-server'",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

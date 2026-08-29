@@ -1,4 +1,0 @@
-{
-  "stage": "fix: fail fast on 409 Conflict with agent notification",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

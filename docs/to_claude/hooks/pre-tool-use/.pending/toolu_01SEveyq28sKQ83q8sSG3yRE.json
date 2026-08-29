@@ -1,4 +1,0 @@
-{
-  "stage": "scp mba:/tmp/orochi-signin.png /tmp/orochi-signin.png",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

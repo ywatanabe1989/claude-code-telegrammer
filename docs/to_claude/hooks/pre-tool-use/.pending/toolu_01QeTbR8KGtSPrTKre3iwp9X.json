@@ -1,4 +1,0 @@
-{
-  "stage": "from mcp.server.session import ServerSession",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

@@ -1,4 +1,0 @@
-{
-  "stage": "`claude-code-telegrammer` currently includes YAML-based agent orchestration commands (`claude-code-telegrammer start config/telegram-master.yaml`) that belong in `scitex-agent-container`.",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

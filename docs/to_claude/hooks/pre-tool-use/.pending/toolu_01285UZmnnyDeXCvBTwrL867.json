@@ -1,4 +1,0 @@
-{
-  "stage": "-exec cat {} \\",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

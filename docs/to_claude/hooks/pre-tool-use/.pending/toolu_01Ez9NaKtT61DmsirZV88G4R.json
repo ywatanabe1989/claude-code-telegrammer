@@ -1,4 +1,0 @@
-{
-  "stage": "tok=$(rg -oP '(?<=^export SCITEX_LEAD_TELEGRAM_BOT_TOKEN=).*' /home/ywatanabe/proj/scitex-lead/.env 2>/dev/null",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

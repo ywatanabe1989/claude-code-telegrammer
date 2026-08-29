@@ -1,4 +1,0 @@
-{
-  "stage": "fix(config): fail loud on unexpanded ${...} env instead of silent junk state dir",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

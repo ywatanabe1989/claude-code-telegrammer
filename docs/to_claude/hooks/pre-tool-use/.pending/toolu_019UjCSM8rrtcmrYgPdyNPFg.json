@@ -1,4 +1,0 @@
-{
-  "stage": "docker exec orochi-server-stable python manage.py shell -c \\\"",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

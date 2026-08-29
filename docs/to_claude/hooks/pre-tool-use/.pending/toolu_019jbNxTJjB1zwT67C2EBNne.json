@@ -1,4 +1,0 @@
-{
-  "stage": "fix: remove broken bin symlink and shared-data config",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

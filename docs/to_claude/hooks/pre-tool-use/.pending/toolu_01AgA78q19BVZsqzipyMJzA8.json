@@ -1,4 +1,0 @@
-{
-  "stage": "fix: bump app.js cache buster to v=118 for WS auth fix",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}

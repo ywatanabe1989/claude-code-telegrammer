@@ -1,4 +1,0 @@
-{
-  "stage": "fix: add webhook/telegram route to all URL confs (bare + workspace)",
-  "cwd": "/home/ywatanabe/proj/claude-code-telegrammer"
-}
