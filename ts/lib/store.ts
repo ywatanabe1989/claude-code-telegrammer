@@ -1,20 +1,33 @@
 /**
- * SQLite message store (Schema v2) for persisting all inbound and outbound Telegram messages.
- * Uses bun:sqlite (built-in, zero dependencies).
+ * PostgreSQL message store (Schema v3) for every inbound and outbound
+ * Telegram message.
+ *
+ * WHAT CHANGED IN v3, AND WHAT DID NOT. The engine moved off local files onto
+ * the fleet's PostgreSQL server (standing directive, 2026-08-29 — no
+ * exceptions). The TABLES did not change: same columns, same names, same
+ * indexes, same `YYYY-MM-DD HH:MM:SS` UTC text timestamps. Anything reading a
+ * row out of this store sees exactly what it saw before.
+ *
+ * WHAT CALLERS MUST NOTICE: every function here is now ASYNC. The previous
+ * engine was synchronous and in-process; a network database cannot be. That is
+ * the whole cost of the move, and it is paid once at each call site with an
+ * `await`. Nothing else about the contract moved — `saveInbound` still returns
+ * null on a duplicate rather than throwing, and a THROW here still means a
+ * real persist failure, which is what tells the poller not to advance the
+ * getUpdates offset past a message it failed to store.
+ *
+ * Poller restart-state (offset / poll heartbeat / coverage gap) lives in
+ * store-meta.ts and is re-exported below, so every existing importer of
+ * `./store.js` keeps working unchanged.
  */
 
-import { Database, Statement } from "bun:sqlite";
-import { join } from "path";
-import { tmpdir } from "os";
-import { STATE_DIR } from "./config.js";
+import { getSql, resolveSchema } from "./pg.js";
 import { log } from "./log.js";
-import { ensureColumn } from "./store-migrations.js";
+import { ensureColumn, isConcurrentDdlRace } from "./store-migrations.js";
 import { assertHermeticTestStore } from "./hermetic-guard.js";
 import { initStoreMeta } from "./store-meta.js";
-export { ensureColumn } from "./store-migrations.js";
-// Poller restart-state (offset / poll heartbeat / coverage gap) moved to
-// store-meta.ts when this file hit the 512-line ceiling. Re-exported here so
-// every existing `from "./store.js"` importer is unaffected.
+import { schemaSql, statements, type Statements } from "./store-schema.js";
+export { ensureColumn, isConcurrentDdlRace } from "./store-migrations.js";
 export {
   saveOffset,
   loadOffset,
@@ -25,227 +38,135 @@ export {
   type CoverageGap,
 } from "./store-meta.js";
 
-// Scitex-standard DB filename (was "messages.db"): self-describing in the
-// ~/.scitex/claude-code-telegrammer runtime tree. SQLite derives the -wal/-shm
-// sidecars from this stem; the startup auto-migration (lib/migrate-state.ts)
-// copies a legacy messages.db onto this name once so history is never lost.
-export const DB_PATH = join(STATE_DIR, "claude-code-telegrammer.db");
+/**
+ * The schema version this code WRITES into meta.schema_version on init.
+ *
+ * Exported as the single source of truth so the health check
+ * (lib/health-checks.ts::checkDbSchemaCurrent) compares against the same
+ * constant instead of a drifting copy. Bumped to 3 by the storage-engine move:
+ * a store still reporting 2 is a file-backed one that has not been carried
+ * forward, and saying so is more useful than pretending the versions are
+ * interchangeable.
+ */
+export const SCHEMA_VERSION = "3";
 
-// The schema version this code WRITES into meta.schema_version on init.
-// Exported as the single source of truth so the health check
-// (lib/health-checks.ts::checkDbSchemaCurrent) compares against the same
-// constant instead of a drifting copy.
-export const SCHEMA_VERSION = "2";
+let stmt: Statements | null = null;
+let activeSchema: string | null = null;
 
-let db: Database | null = null;
+/** The namespace this process is bound to. Throws before {@link initStore}. */
+export function storeSchema(): string {
+  if (activeSchema === null) throw new Error("store not initialized");
+  return activeSchema;
+}
 
-// ── Cached prepared statements ─────────────────────────────────────────────
-
-let stmtInsertInbound: Statement | null = null;
-let stmtInsertOutbound: Statement | null = null;
-let stmtMarkRead: Statement | null = null;
-let stmtMarkAllRead: Statement | null = null;
-let stmtGetUnreadAll: Statement | null = null;
-let stmtGetUnreadChat: Statement | null = null;
-let stmtGetHistory: Statement | null = null;
-let stmtMessageByMessageId: Statement | null = null;
-let stmtInsertAttachment: Statement | null = null;
-let stmtAttachmentsForRow: Statement | null = null;
-let stmtAttachmentByFileId: Statement | null = null;
-let stmtMarkAttachmentDownloaded: Statement | null = null;
-let stmtSetRepliedAt: Statement | null = null;
-let stmtSearchAll: Statement | null = null;
-let stmtSearchChat: Statement | null = null;
-let stmtContextChat: Statement | null = null;
-
-// ── Schema ─────────────────────────────────────────────────────────────────
-
-// busy_timeout FIRST (concurrency fix — see ts/test/multiprocess-sqlite.test.ts):
-const SCHEMA_SQL = `
-PRAGMA busy_timeout = 5000;
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
-    chat_id TEXT NOT NULL,
-    message_id TEXT,
-    user_id TEXT,
-    username TEXT,
-    text TEXT,
-    telegram_ts TEXT,
-    received_at TEXT DEFAULT (datetime('now')),
-    read_at TEXT,
-    replied_at TEXT,
-    reply_to_message_id TEXT,
-    reply_to_row_id INTEGER REFERENCES messages(id),
-    forward_json TEXT,
-    host TEXT,
-    project TEXT,
-    agent_id TEXT,
-    bot_token_hash TEXT,
-    raw_json TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_msg_chat_id ON messages(chat_id);
-CREATE INDEX IF NOT EXISTS idx_msg_direction ON messages(direction, chat_id);
-CREATE INDEX IF NOT EXISTS idx_msg_received_at ON messages(received_at);
-CREATE INDEX IF NOT EXISTS idx_msg_unread ON messages(chat_id, read_at) WHERE read_at IS NULL AND direction = 'inbound';
-CREATE INDEX IF NOT EXISTS idx_msg_unreplied ON messages(chat_id, replied_at) WHERE replied_at IS NULL AND direction = 'inbound';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_dedup ON messages(chat_id, message_id, direction);
-CREATE INDEX IF NOT EXISTS idx_msg_agent ON messages(host, project, agent_id);
-
-CREATE TABLE IF NOT EXISTS attachments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    message_row_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,
-    file_id TEXT NOT NULL,
-    file_unique_id TEXT,
-    file_name TEXT,
-    mime_type TEXT,
-    file_size INTEGER,
-    local_path TEXT,
-    downloaded_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_att_message ON attachments(message_row_id);
-`;
+function ready(): Statements {
+  if (!stmt) throw new Error("store not initialized");
+  return stmt;
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 
-export function initStore(): void {
-  // FAIL LOUD before we touch a single byte: a test run whose hermetic preload
-  // did not load is about to open the LIVE production database. Silently
+/**
+ * Create this agent's namespace if absent, bring it forward, and bind the
+ * statements. Idempotent, and safe when the MCP server and its poller run it
+ * concurrently.
+ */
+export async function initStore(): Promise<void> {
+  // FAIL LOUD before we touch a single row: a test run whose hermetic preload
+  // did not load is about to open the LIVE production namespace. Silently
   // writing to the real bridge is the single most destructive thing this
   // process can do, and on 2026-07-14 it did exactly that (see
   // lib/hermetic-guard.ts). Guard the act, not the intention.
-  assertHermeticTestStore(process.env.NODE_ENV, STATE_DIR, tmpdir());
+  const schema = resolveSchema();
+  assertHermeticTestStore(process.env.NODE_ENV, schema);
 
-  db = new Database(DB_PATH, { create: true });
-  db.exec(SCHEMA_SQL);
+  await applySchema(schema);
 
-  // Seed meta with schema version
-  db.prepare(
-    "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
-  ).run(SCHEMA_VERSION);
+  const s = statements(schema);
 
   // ── Migration: forward_json column (added 2026-06) ──────────────────
-  // CREATE TABLE IF NOT EXISTS does NOT alter existing tables, so older
-  // databases need an explicit ALTER. Guarded by table_info check so
-  // it's idempotent and safe to re-run on every startup.
-  ensureColumn(db, "messages", "forward_json", "TEXT");
+  // CREATE TABLE IF NOT EXISTS does NOT alter existing tables when columns are
+  // added to the schema, so this runs on every startup to bring older
+  // namespaces forward without dropping data.
+  await ensureColumn(schema, "messages", "forward_json", "TEXT");
   // ── Migration: pending_notification (added 2026-07) — lib/notify-relay.ts
   // cross-process live-push relay for interactive-CLI (!wakeEnabled()) mode.
-  ensureColumn(db, "messages", "pending_notification", "TEXT");
+  await ensureColumn(schema, "messages", "pending_notification", "TEXT");
 
-  // Cache prepared statements
-  stmtInsertInbound = db.prepare(`
-    INSERT OR IGNORE INTO messages
-      (direction, chat_id, message_id, user_id, username, text, telegram_ts, received_at, reply_to_message_id, forward_json, host, project, agent_id, bot_token_hash, raw_json)
-    VALUES
-      ('inbound', ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
-  `);
+  await getSql().unsafe(s.metaSeed, ["schema_version", SCHEMA_VERSION]);
 
-  stmtInsertOutbound = db.prepare(`
-    INSERT INTO messages
-      (direction, chat_id, message_id, text, reply_to_message_id, reply_to_row_id, host, project, agent_id, bot_token_hash, received_at, replied_at)
-    VALUES
-      ('outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-  `);
+  stmt = s;
+  activeSchema = schema;
+  initStoreMeta(s);
 
-  stmtSetRepliedAt = db.prepare(`
-    UPDATE messages SET replied_at = datetime('now') WHERE id = ? AND direction = 'inbound'
-  `);
+  log("store", `initialized in schema ${schema} (schema v${SCHEMA_VERSION})`);
+}
 
-  stmtMarkRead = db.prepare(`
-    UPDATE messages SET read_at = datetime('now') WHERE id = ? AND read_at IS NULL AND direction = 'inbound'
-  `);
+/**
+ * Run the DDL script, RETRYING when a concurrent starter wins a catalog race.
+ *
+ * A retry rather than a swallow, because the script is many statements run as
+ * one batch: if statement three loses the race, statements four onward never
+ * executed, and treating that as success would leave the namespace missing
+ * tables. On the retry every object the winner made already exists, so the
+ * IF NOT EXISTS clauses no-op and the batch completes.
+ *
+ * Three attempts, because more than one object can be contended in the same
+ * batch (the schema, then a table, then an index) and each lost race costs
+ * one attempt. A fourth would be indistinguishable from a real fault.
+ */
+async function applySchema(schema: string): Promise<void> {
+  const sql = getSql();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await sql.unsafe(schemaSql(schema)).simple();
+      return;
+    } catch (err) {
+      if (attempt === 3 || !isConcurrentDdlRace(err)) throw err;
+      log(
+        "store",
+        `schema DDL lost a startup race (attempt ${attempt}/3) — another ` +
+          `process is creating the same namespace; retrying`,
+        { schema },
+      );
+    }
+  }
+}
 
-  stmtMarkAllRead = db.prepare(`
-    UPDATE messages SET read_at = datetime('now') WHERE chat_id = ? AND read_at IS NULL AND direction = 'inbound'
-  `);
+/** Test hook: forget the binding so the next initStore() re-resolves it. */
+export function _resetStoreForTests(): void {
+  stmt = null;
+  activeSchema = null;
+}
 
-  stmtGetUnreadAll = db.prepare(`
-    SELECT * FROM messages WHERE read_at IS NULL AND direction = 'inbound' ORDER BY id
-  `);
 
-  stmtGetUnreadChat = db.prepare(`
-    SELECT * FROM messages WHERE chat_id = ? AND read_at IS NULL AND direction = 'inbound' ORDER BY id
-  `);
-
-  stmtGetHistory = db.prepare(`
-    SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC LIMIT ? OFFSET ?
-  `);
-
-  // Reply-target lookup (lib/reply-context.ts). Deliberately NOT filtered by
-  // direction: the message an operator replies to is usually one the BOT
-  // sent, so an inbound-only lookup would miss the common case entirely.
-  // Newest row wins — (chat_id, message_id, direction) is unique, so the only
-  // way to get two is an inbound and an outbound sharing an id.
-  stmtMessageByMessageId = db.prepare(`
-    SELECT * FROM messages WHERE chat_id = ? AND message_id = ?
-    ORDER BY id DESC LIMIT 1
-  `);
-
-  // Poller restart-state (update_offset / last_poll_ts / coverage_gap) lives
-  // in store-meta.ts — same `meta` table, its own responsibility.
-  initStoreMeta(db);
-
-  stmtInsertAttachment = db.prepare(`
-    INSERT INTO attachments (message_row_id, kind, file_id, file_unique_id, file_name, mime_type, file_size)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  // Attachment queries (incident cct-inbound-images-20260707): the join
-  // onto messages carries chat_id along so download_attachment(row_id)
-  // can route the download into the right per-chat directory without a
-  // second lookup.
-  stmtAttachmentsForRow = db.prepare(`
-    SELECT a.message_row_id, a.kind, a.file_id, a.file_name, a.mime_type,
-           a.local_path, a.downloaded_at, m.chat_id
-    FROM attachments a JOIN messages m ON m.id = a.message_row_id
-    WHERE a.message_row_id = ? ORDER BY a.id
-  `);
-
-  stmtAttachmentByFileId = db.prepare(`
-    SELECT a.message_row_id, a.kind, a.file_id, a.file_name, a.mime_type,
-           a.local_path, a.downloaded_at, m.chat_id
-    FROM attachments a JOIN messages m ON m.id = a.message_row_id
-    WHERE a.file_id = ? ORDER BY a.id DESC LIMIT 1
-  `);
-
-  stmtMarkAttachmentDownloaded = db.prepare(`
-    UPDATE attachments SET local_path = ?, downloaded_at = datetime('now')
-    WHERE message_row_id = ? AND file_id = ?
-  `);
-
-  stmtSearchAll = db.prepare(`
-    SELECT * FROM messages WHERE text LIKE ? ORDER BY id DESC LIMIT ?
-  `);
-
-  stmtSearchChat = db.prepare(`
-    SELECT * FROM messages WHERE chat_id = ? AND text LIKE ? ORDER BY id DESC LIMIT ?
-  `);
-
-  stmtContextChat = db.prepare(`
-    SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
-  `);
-
-  log("store", `initialized at ${DB_PATH} (schema v${SCHEMA_VERSION})`);
+/**
+ * Bring one message row back to the shape callers have always seen.
+ *
+ * `id` and `reply_to_row_id` are 64-bit in the database, and a 64-bit integer
+ * does not fit a JavaScript number, so the driver hands them over as STRINGS
+ * rather than silently rounding. That is the right call by the driver and the
+ * wrong shape for us: these ids are returned verbatim to MCP callers by
+ * get_history / get_unread, and an agent that has always read `id` as a number
+ * would start seeing `"41"`. A row id in this store is bounded by the number
+ * of Telegram messages one bridge ever receives, which is nowhere near the
+ * safe-integer limit, so the conversion is lossless in practice — and doing it
+ * HERE, once, is what keeps the change invisible to everything downstream.
+ */
+function normalizeMessageRow(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...row };
+  if (typeof out.id === "string") out.id = Number(out.id);
+  if (typeof out.reply_to_row_id === "string") {
+    out.reply_to_row_id = Number(out.reply_to_row_id);
+  }
+  return out;
 }
 
 // ── Inbound ────────────────────────────────────────────────────────────────
 
-export function saveInbound(msg: {
+export async function saveInbound(msg: {
   chat_id: string;
   message_id: string;
   user_id: string;
@@ -259,9 +180,8 @@ export function saveInbound(msg: {
   agent_id: string;
   bot_token_hash: string;
   raw_json: string;
-}): number | null {
-  if (!db || !stmtInsertInbound) throw new Error("store not initialized");
-  const result = stmtInsertInbound.run(
+}): Promise<number | null> {
+  const rows = await getSql().unsafe(ready().insertInbound, [
     msg.chat_id,
     msg.message_id,
     msg.user_id,
@@ -275,15 +195,17 @@ export function saveInbound(msg: {
     msg.agent_id,
     msg.bot_token_hash,
     msg.raw_json,
-  );
-  // INSERT OR IGNORE returns changes=0 on duplicate
-  if (result.changes === 0) return null;
-  return Number(result.lastInsertRowid);
+  ]);
+  // ON CONFLICT DO NOTHING returns no row on a duplicate — the same "already
+  // durably stored, safe to advance the offset" signal the previous engine
+  // gave through changes=0.
+  const row = rows[0] as { id: string | number } | undefined;
+  return row ? Number(row.id) : null;
 }
 
 // ── Outbound ───────────────────────────────────────────────────────────────
 
-export function saveOutbound(
+export async function saveOutbound(
   chatId: string,
   text: string,
   messageId?: string,
@@ -294,11 +216,10 @@ export function saveOutbound(
     agent_id: string;
     bot_token_hash: string;
   },
-): number {
-  if (!db || !stmtInsertOutbound || !stmtSetRepliedAt)
-    throw new Error("store not initialized");
-
-  const result = stmtInsertOutbound.run(
+): Promise<number> {
+  const s = ready();
+  const sql = getSql();
+  const rows = await sql.unsafe(s.insertOutbound, [
     chatId,
     messageId ?? null,
     text,
@@ -308,48 +229,45 @@ export function saveOutbound(
     ctx?.project ?? null,
     ctx?.agent_id ?? null,
     ctx?.bot_token_hash ?? null,
-  );
+  ]);
 
   // Mark the referenced inbound message as replied
   if (replyToRowId) {
-    stmtSetRepliedAt.run(replyToRowId);
+    await sql.unsafe(s.setRepliedAt, [replyToRowId]);
   }
 
-  return Number(result.lastInsertRowid);
+  return Number((rows[0] as { id: string | number }).id);
 }
 
 // ── Read status ────────────────────────────────────────────────────────────
 
-export function markRead(id: number): void {
-  if (!stmtMarkRead) throw new Error("store not initialized");
-  stmtMarkRead.run(id);
+export async function markRead(id: number): Promise<void> {
+  await getSql().unsafe(ready().markRead, [id]);
 }
 
-export function markAllRead(chatId: string): void {
-  if (!stmtMarkAllRead) throw new Error("store not initialized");
-  stmtMarkAllRead.run(chatId);
+export async function markAllRead(chatId: string): Promise<void> {
+  await getSql().unsafe(ready().markAllRead, [chatId]);
 }
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
-export function getUnread(chatId?: string): Array<Record<string, unknown>> {
-  if (!stmtGetUnreadAll || !stmtGetUnreadChat)
-    throw new Error("store not initialized");
-  if (chatId) {
-    return stmtGetUnreadChat.all(chatId) as Array<Record<string, unknown>>;
-  }
-  return stmtGetUnreadAll.all() as Array<Record<string, unknown>>;
+export async function getUnread(
+  chatId?: string,
+): Promise<Array<Record<string, unknown>>> {
+  const s = ready();
+  const rows = chatId
+    ? await getSql().unsafe(s.unreadChat, [chatId])
+    : await getSql().unsafe(s.unreadAll, []);
+  return (rows as Array<Record<string, unknown>>).map(normalizeMessageRow);
 }
 
-export function getHistory(
+export async function getHistory(
   chatId: string,
   limit: number = 20,
   offset: number = 0,
-): Array<Record<string, unknown>> {
-  if (!stmtGetHistory) throw new Error("store not initialized");
-  return stmtGetHistory.all(chatId, limit, offset) as Array<
-    Record<string, unknown>
-  >;
+): Promise<Array<Record<string, unknown>>> {
+  const rows = await getSql().unsafe(ready().history, [chatId, limit, offset]);
+  return (rows as Array<Record<string, unknown>>).map(normalizeMessageRow);
 }
 
 /**
@@ -360,20 +278,18 @@ export function getHistory(
  * the chat has no such message — which is a real, reportable answer
  * ("UNRESOLVED"), not an error to swallow.
  */
-export function getMessageByMessageId(
+export async function getMessageByMessageId(
   chatId: string,
   messageId: string,
-): Record<string, unknown> | null {
-  if (!stmtMessageByMessageId) throw new Error("store not initialized");
-  const row = stmtMessageByMessageId.get(chatId, messageId) as
-    | Record<string, unknown>
-    | undefined;
-  return row ?? null;
+): Promise<Record<string, unknown> | null> {
+  const rows = await getSql().unsafe(ready().byMessageId, [chatId, messageId]);
+  const row = rows[0] as Record<string, unknown> | undefined;
+  return row ? normalizeMessageRow(row) : null;
 }
 
 // ── Attachments ────────────────────────────────────────────────────────────
 
-export function insertAttachment(
+export async function insertAttachment(
   messageRowId: number,
   attachment: {
     kind: string;
@@ -383,9 +299,8 @@ export function insertAttachment(
     mime_type?: string;
     file_size?: number;
   },
-): void {
-  if (!stmtInsertAttachment) throw new Error("store not initialized");
-  stmtInsertAttachment.run(
+): Promise<void> {
+  await getSql().unsafe(ready().insertAttachment, [
     messageRowId,
     attachment.kind,
     attachment.file_id,
@@ -393,7 +308,7 @@ export function insertAttachment(
     attachment.file_name ?? null,
     attachment.mime_type ?? null,
     attachment.file_size ?? null,
-  );
+  ]);
 }
 
 /**
@@ -416,16 +331,34 @@ export interface AttachmentRow {
 /**
  * Attachments for a set of message row ids (incident
  * cct-inbound-images-20260707 — lets get_history / get_unread expose
- * file_id + local_path per message). Loops one indexed lookup per row
- * instead of a dynamic IN (…) because prepared statements are fixed-arity
- * and a history page is ≤ ~20 rows — N tiny idx_att_message hits.
+ * file_id + local_path per message).
+ *
+ * ONE round trip for the whole page, via an array parameter. The previous
+ * engine looped a lookup per row because its prepared statements were
+ * fixed-arity and the calls were free; across a network they are not, so a
+ * 20-row history page is one query instead of twenty.
  */
-export function attachmentsForRows(rowIds: number[]): AttachmentRow[] {
-  if (!stmtAttachmentsForRow) throw new Error("store not initialized");
-  const out: AttachmentRow[] = [];
-  for (const id of rowIds) {
-    out.push(...(stmtAttachmentsForRow.all(id) as AttachmentRow[]));
-  }
+export async function attachmentsForRows(
+  rowIds: number[],
+): Promise<AttachmentRow[]> {
+  const s = ready();
+  // Coerce here, not at the boundary: this is what makes the joined-string
+  // parameter below carry digits and nothing else.
+  const ids = rowIds.map(Number).filter(Number.isFinite);
+  if (ids.length === 0) return [];
+  const rows = await getSql().unsafe(s.attachmentsForRow, [ids.join(",")]);
+  return (rows as AttachmentRow[]).map(normalizeAttachment);
+}
+
+/** Same 64-bit-arrives-as-a-string rule as normalizeMessageRow, for the
+ * attachment join: `message_row_id` is compared against a row id, and
+ * `file_size` is rendered to the operator. */
+function normalizeAttachment(row: AttachmentRow): AttachmentRow {
+  const out: AttachmentRow & { file_size?: unknown } = {
+    ...row,
+    message_row_id: Number(row.message_row_id),
+  };
+  if (typeof out.file_size === "string") out.file_size = Number(out.file_size);
   return out;
 }
 
@@ -435,9 +368,12 @@ export function attachmentsForRows(rowIds: number[]): AttachmentRow[] {
  * Used by download_attachment to short-circuit to an existing
  * local_path before hitting the network.
  */
-export function findAttachmentByFileId(fileId: string): AttachmentRow | null {
-  if (!stmtAttachmentByFileId) throw new Error("store not initialized");
-  return (stmtAttachmentByFileId.get(fileId) as AttachmentRow) ?? null;
+export async function findAttachmentByFileId(
+  fileId: string,
+): Promise<AttachmentRow | null> {
+  const rows = await getSql().unsafe(ready().attachmentByFileId, [fileId]);
+  const row = rows[0] as AttachmentRow | undefined;
+  return row ? normalizeAttachment(row) : null;
 }
 
 /**
@@ -446,44 +382,44 @@ export function findAttachmentByFileId(fileId: string): AttachmentRow | null {
  * the local_path. Same UPDATE the background queue in attachments.ts
  * performs — kept here too so the on-demand path is equally durable.
  */
-export function markAttachmentDownloaded(
+export async function markAttachmentDownloaded(
   messageRowId: number,
   fileId: string,
   localPath: string,
-): void {
-  if (!stmtMarkAttachmentDownloaded) throw new Error("store not initialized");
-  stmtMarkAttachmentDownloaded.run(localPath, messageRowId, fileId);
+): Promise<void> {
+  await getSql().unsafe(ready().markAttachmentDownloaded, [
+    localPath,
+    messageRowId,
+    fileId,
+  ]);
 }
 
 // ── Search & Context ──────────────────────────────────────────────────────
 
-export function searchMessages(
+export async function searchMessages(
   query: string,
   chatId?: string,
   limit: number = 20,
-): Array<Record<string, unknown>> {
-  if (!stmtSearchAll || !stmtSearchChat)
-    throw new Error("store not initialized");
+): Promise<Array<Record<string, unknown>>> {
+  const s = ready();
   const pattern = `%${query}%`;
-  if (chatId) {
-    return stmtSearchChat.all(chatId, pattern, limit) as Array<
-      Record<string, unknown>
-    >;
-  }
-  return stmtSearchAll.all(pattern, limit) as Array<Record<string, unknown>>;
+  const rows = chatId
+    ? await getSql().unsafe(s.searchChat, [chatId, pattern, limit])
+    : await getSql().unsafe(s.searchAll, [pattern, limit]);
+  return (rows as Array<Record<string, unknown>>).map(normalizeMessageRow);
 }
 
-export function getConversationContext(
+export async function getConversationContext(
   chatId: string,
   maxMessages: number = 10,
-): string {
-  if (!stmtContextChat) throw new Error("store not initialized");
-  const rows = stmtContextChat.all(chatId, maxMessages) as Array<
-    Record<string, unknown>
-  >;
+): Promise<string> {
+  const rows = (await getSql().unsafe(ready().contextChat, [
+    chatId,
+    maxMessages,
+  ])) as Array<Record<string, unknown>>;
   // Reverse to chronological order (query is DESC)
-  rows.reverse();
-  return rows
+  const chronological = [...rows].reverse();
+  return chronological
     .map((r) => {
       const dir = r.direction === "inbound" ? "user" : "bot";
       const who = r.username ?? r.user_id ?? dir;

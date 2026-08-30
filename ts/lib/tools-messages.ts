@@ -55,15 +55,15 @@ function jsonResult(value: unknown): ToolResult {
  * inbound "(photo) [attachment …]" line back to a file_id / local_path
  * from the DB instead of digging through raw_json.
  */
-export function withAttachments(
+export async function withAttachments(
   rows: Array<Record<string, unknown>>,
-): Array<Record<string, unknown>> {
+): Promise<Array<Record<string, unknown>>> {
   const ids = rows
     .map((r) => Number(r.id))
     .filter((n) => Number.isFinite(n) && n > 0);
   if (ids.length === 0) return rows;
   const byRow = new Map<number, AttachmentRow[]>();
-  for (const att of attachmentsForRows(ids)) {
+  for (const att of await attachmentsForRows(ids)) {
     const list = byRow.get(att.message_row_id) ?? [];
     list.push(att);
     byRow.set(att.message_row_id, list);
@@ -80,11 +80,11 @@ export function withAttachments(
  * returned. Best-effort: if the coverage probe itself fails, the caller still
  * gets its messages, with the failure stated (never a silent "covered").
  */
-export function currentCoverage(): IngestionCoverage {
+export async function currentCoverage(): Promise<IngestionCoverage> {
   try {
-    const gap = loadCoverageGap();
+    const gap = await loadCoverageGap();
     const coverage = buildCoverage({
-      lastPollTs: loadLastPollTs(),
+      lastPollTs: await loadLastPollTs(),
       lastGapAt: gap?.at ?? null,
       lastGapMissedUpdates: gap?.missedUpdates ?? null,
     });
@@ -117,26 +117,32 @@ export function currentCoverage(): IngestionCoverage {
  * check this tool and NOT to assume a quiet inbox means nothing was sent; the
  * tool now carries the evidence needed to honour that instruction.
  */
-function messagesResult(rows: Array<Record<string, unknown>>): ToolResult {
+async function messagesResult(
+  rows: Array<Record<string, unknown>>,
+): Promise<ToolResult> {
   return jsonResult({
-    coverage: currentCoverage(),
+    coverage: await currentCoverage(),
     count: rows.length,
-    messages: withAttachments(rows),
+    messages: await withAttachments(rows),
   });
 }
 
-export function handleGetHistory(args: Record<string, unknown>): ToolResult {
+export async function handleGetHistory(
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
   const chatId = args.chat_id as string;
   const limit = (args.limit as number) ?? 20;
   const offset = (args.offset as number) ?? 0;
   assertAllowedChat(chatId);
-  return messagesResult(getHistory(chatId, limit, offset));
+  return messagesResult(await getHistory(chatId, limit, offset));
 }
 
-export function handleGetUnread(args: Record<string, unknown>): ToolResult {
+export async function handleGetUnread(
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
   const chatId = args.chat_id as string | undefined;
   if (chatId) assertAllowedChat(chatId);
-  return messagesResult(getUnread(chatId));
+  return messagesResult(await getUnread(chatId));
 }
 
 /**
@@ -170,7 +176,7 @@ export async function handleDownloadAttachment(
 
   let att: AttachmentRow | null = null;
   if (rowIdArg != null) {
-    att = attachmentsForRows([rowIdArg])[0] ?? null;
+    att = (await attachmentsForRows([rowIdArg]))[0] ?? null;
     if (!att) {
       return textResult(
         `no attachment recorded for row_id ${rowIdArg} — that message has no stored attachment. ` +
@@ -179,7 +185,7 @@ export async function handleDownloadAttachment(
       );
     }
   } else if (fileIdArg) {
-    att = findAttachmentByFileId(fileIdArg);
+    att = await findAttachmentByFileId(fileIdArg);
   }
 
   if (att?.local_path && existsSync(att.local_path)) {
@@ -194,7 +200,11 @@ export async function handleDownloadAttachment(
     // Log-only on failure: the download itself succeeded and the caller
     // must still get the path.
     try {
-      markAttachmentDownloaded(att.message_row_id, att.file_id, localPath);
+      await markAttachmentDownloaded(
+        att.message_row_id,
+        att.file_id,
+        localPath,
+      );
     } catch (err) {
       log("tools", "failed to record download on attachment row", {
         error: String(err),

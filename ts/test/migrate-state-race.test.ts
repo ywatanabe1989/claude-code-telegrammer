@@ -4,37 +4,47 @@
  * migrateLegacyStateDir() is called BARE, at top level, with no try/catch, from
  * two separate processes:
  *
- *   ts/telegram-poller.ts:118   migrateLegacyStateDir();
- *   ts/telegram-server.ts:368   migrateLegacyStateDir();
+ *   ts/telegram-poller.ts   migrateLegacyStateDir();
+ *   ts/telegram-server.ts   migrateLegacyStateDir();
  *
- * Both can start at once. The idempotency guard is `existsSync(newDb)` — a
- * check-then-act with a real window between the check and the write, and the
- * attachments tree is copied inside that window.
- *
- * So the losing racer reaches the final snapshot AFTER the winner has already
- * written newDb. `VACUUM INTO` refuses a destination that already exists
- * (measured: `SQLiteError: output file already exists`), migrateLegacyStateDir
- * rethrows, and at the poller's top level nothing catches it. JS cannot resume
- * top-level execution after an uncaught exception, so startPolling() never runs
- * and the poller goes SILENTLY INERT — the global uncaughtException handler
- * only logs. Nothing notices: ensurePollerRunning's spawn is fire-and-forget.
+ * Both can start at once, and the idempotency guard is a check-then-act with a
+ * real window between the check and the write. If the loser throws, nothing
+ * catches it: JS cannot resume top-level execution after an uncaught
+ * exception, so startPolling() never runs and the poller goes SILENTLY INERT —
+ * the global uncaughtException handler only logs, and ensurePollerRunning's
+ * spawn is fire-and-forget, so nothing notices.
  *
  * That is the same silent-inert-poller failure class documented in
- * store-migration-race.test.ts for a DIFFERENT code path (store.ts::ensureColumn).
- * That test does not cover this one, and its existence should not be mistaken
- * for coverage here.
+ * store-migration-race.test.ts for a DIFFERENT code path
+ * (store.ts::ensureColumn). That test does not cover this one, and its
+ * existence should not be mistaken for coverage here.
  *
- * Losing this race is BENIGN by definition — it means another process already
- * completed the very migration we were attempting. The correct behaviour is to
- * notice that and carry on, NOT to abort startup. Genuine failures (disk full,
- * unreadable source, corrupt database) must still be loud.
+ * WHAT THE STORAGE-ENGINE MOVE CHANGED. The old loser died on `VACUUM INTO`
+ * refusing an existing destination — a database-file operation that no longer
+ * happens here at all, because the store moved to PostgreSQL and this module
+ * copies only attachments and access.json. Both of those copies are
+ * overwrite-safe, so the specific throw is gone.
+ *
+ * THE TEST IS NOT. "The loser does not throw" is the property the poller's
+ * liveness depends on, it does not follow from the new implementation by
+ * inspection, and a future change here could reintroduce the failure. Losing
+ * this race is BENIGN by definition — it means another process already did the
+ * work. Genuine failures (disk full, unreadable source) must still be loud,
+ * and the second case pins that the tolerance did not widen into swallowing
+ * everything.
  */
 
 import { describe, test, expect } from "bun:test";
-import { Database } from "bun:sqlite";
 import { join } from "path";
 import { tmpdir } from "os";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  cpSync,
+} from "fs";
 import { migrateLegacyStateDir } from "../lib/migrate-state.js";
 
 const silent = () => {};
@@ -50,28 +60,10 @@ function makeRoot(tag: string): string {
   return root;
 }
 
-/** A real legacy store with one row, plus attachments so copyDir runs. */
 function seedLegacy(dir: string): void {
-  mkdirSync(dir, { recursive: true });
-  const db = new Database(join(dir, "messages.db"));
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("CREATE TABLE messages (id INTEGER PRIMARY KEY, text TEXT);");
-  db.prepare("INSERT INTO messages (text) VALUES (?)").run("legacy-row");
-  db.close();
-  mkdirSync(join(dir, "attachments"), { recursive: true });
-  writeFileSync(join(dir, "attachments", "a.jpg"), "IMG");
-}
-
-function readTexts(dbPath: string): string[] {
-  const db = new Database(dbPath, { readonly: true });
-  try {
-    return db
-      .prepare("SELECT text FROM messages ORDER BY id")
-      .all()
-      .map((r: { text: string }) => r.text);
-  } finally {
-    db.close();
-  }
+  mkdirSync(join(dir, "attachments", "photos"), { recursive: true });
+  writeFileSync(join(dir, "attachments", "photos", "a.jpg"), "IMG");
+  writeFileSync(join(dir, "access.json"), '{"dmPolicy":"allowlist"}');
 }
 
 describe("migrateLegacyStateDir — losing the startup race", () => {
@@ -83,16 +75,17 @@ describe("migrateLegacyStateDir — losing the startup race", () => {
     seedLegacy(oldDir);
     try {
       // Simulate the WINNER finishing inside our copy window: by the time we
-      // reach the final snapshot, newDir already holds a complete store. This
-      // is exactly what a concurrent poller/server startup produces.
-      const winnerWrites = (src: string, dst: string) => {
-        const w = new Database(join(oldDir, "messages.db"));
-        try {
-          w.run("VACUUM INTO ?", [join(newDir, "claude-code-telegrammer.db")]);
-        } finally {
-          w.close();
-        }
-        require("fs").cpSync(src, dst, { recursive: true });
+      // return from copying attachments, newDir already holds a complete
+      // migration, marker and all. This is exactly what a concurrent
+      // poller/server startup produces.
+      const winnerFinishesFirst = (src: string, dst: string) => {
+        cpSync(src, dst, { recursive: true });
+        writeFileSync(join(newDir, "access.json"), '{"dmPolicy":"allowlist"}');
+        writeFileSync(
+          join(newDir, ".migrated-from"),
+          JSON.stringify({ from: oldDir, at: "2026-07-09T00:00:00.000Z" }) +
+            "\n",
+        );
       };
 
       const result = migrateLegacyStateDir({
@@ -101,30 +94,35 @@ describe("migrateLegacyStateDir — losing the startup race", () => {
         newDir,
         oldDir,
         logFn: silent,
-        copyDir: winnerWrites,
+        copyDir: winnerFinishesFirst,
       });
 
       // MUST NOT THROW. Reaching this line at all is the point of the test:
       // a throw here is an uncaught exception at the poller's top level.
       expect(result).toBeDefined();
 
-      // And the store the winner wrote must be intact and readable.
-      const migrated = join(newDir, "claude-code-telegrammer.db");
-      expect(existsSync(migrated)).toBe(true);
-      expect(readTexts(migrated)).toEqual(["legacy-row"]);
+      // And what the winner wrote must be intact — the loser must not have
+      // clobbered a completed migration on its way past.
+      expect(readFileSync(join(newDir, "access.json"), "utf8")).toBe(
+        '{"dmPolicy":"allowlist"}',
+      );
+      expect(
+        readFileSync(join(newDir, "attachments", "photos", "a.jpg"), "utf8"),
+      ).toBe("IMG");
+      expect(existsSync(join(newDir, ".migrated-from"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test("a GENUINE snapshot failure is still loud", () => {
+  test("a GENUINE copy failure is still loud", () => {
     const root = makeRoot("loud");
     const home = join(root, "home");
     const newDir = join(root, "newstate");
     const oldDir = join(root, "oldstate");
     seedLegacy(oldDir);
     try {
-      // Swallowing the benign race must not turn into swallowing everything.
+      // Tolerating the benign race must not turn into swallowing everything.
       expect(() =>
         migrateLegacyStateDir({
           env: {},
@@ -132,18 +130,15 @@ describe("migrateLegacyStateDir — losing the startup race", () => {
           newDir,
           oldDir,
           logFn: silent,
-          snapshotDb: () => {
+          copyDir: () => {
             throw new Error("disk full");
           },
         }),
       ).toThrow("disk full");
 
-      // Fail loud means fail VISIBLY: no success marker, no half-migrated DB
-      // that would make the next startup skip on new-db-exists.
+      // Fail loud means fail VISIBLY: no success marker, so the next startup
+      // re-runs instead of skipping on a marker it never earned.
       expect(existsSync(join(newDir, ".migrated-from"))).toBe(false);
-      expect(existsSync(join(newDir, "claude-code-telegrammer.db"))).toBe(
-        false,
-      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

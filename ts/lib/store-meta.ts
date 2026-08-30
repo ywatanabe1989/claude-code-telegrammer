@@ -21,14 +21,10 @@
  * below, so existing importers keep importing from ./store.js unchanged.
  */
 
-import type { Database, Statement } from "bun:sqlite";
+import { getSql } from "./pg.js";
+import type { Statements } from "./store-schema.js";
 
-let stmtSaveOffset: Statement | null = null;
-let stmtLoadOffset: Statement | null = null;
-let stmtSaveLastPollTs: Statement | null = null;
-let stmtLoadLastPollTs: Statement | null = null;
-let stmtSaveCoverageGap: Statement | null = null;
-let stmtLoadCoverageGap: Statement | null = null;
+let stmt: Statements | null = null;
 
 /**
  * A recorded discontinuity: at {@link at} (epoch-ms) we asked Telegram for
@@ -41,46 +37,45 @@ export interface CoverageGap {
   missedUpdates: number;
 }
 
-/** Prepare the meta statements. Called by store.ts::initStore with its db. */
-export function initStoreMeta(db: Database): void {
-  const upsert = (key: string) =>
-    db.prepare(
-      `INSERT INTO meta (key, value) VALUES ('${key}', ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    );
-  const read = (key: string) =>
-    db.prepare(`SELECT value FROM meta WHERE key = '${key}'`);
-
-  stmtSaveOffset = upsert("update_offset");
-  stmtLoadOffset = read("update_offset");
-  stmtSaveLastPollTs = upsert("last_poll_ts");
-  stmtLoadLastPollTs = read("last_poll_ts");
-  stmtSaveCoverageGap = upsert("coverage_gap");
-  stmtLoadCoverageGap = read("coverage_gap");
+/** Bind the meta statements. Called by store.ts::initStore with its schema. */
+export function initStoreMeta(statements: Statements): void {
+  stmt = statements;
 }
 
-function readInt(stmt: Statement | null): number {
+function ready(): Statements {
   if (!stmt) throw new Error("store not initialized");
-  const row = stmt.get() as { value: string } | undefined;
-  return row ? parseInt(row.value, 10) : 0;
+  return stmt;
 }
 
-export function saveOffset(offset: number): void {
-  if (!stmtSaveOffset) throw new Error("store not initialized");
-  stmtSaveOffset.run(String(offset));
+async function writeKey(key: string, value: string): Promise<void> {
+  await getSql().unsafe(ready().metaUpsert, [key, value]);
 }
 
-export function loadOffset(): number {
-  return readInt(stmtLoadOffset);
+async function readKey(key: string): Promise<string | null> {
+  const rows = await getSql().unsafe(ready().metaRead, [key]);
+  const row = rows[0] as { value: string } | undefined;
+  return row ? row.value : null;
 }
 
-export function saveLastPollTs(epochMs: number): void {
-  if (!stmtSaveLastPollTs) throw new Error("store not initialized");
-  stmtSaveLastPollTs.run(String(epochMs));
+async function readInt(key: string): Promise<number> {
+  const value = await readKey(key);
+  return value === null ? 0 : parseInt(value, 10);
 }
 
-export function loadLastPollTs(): number {
-  return readInt(stmtLoadLastPollTs);
+export async function saveOffset(offset: number): Promise<void> {
+  await writeKey("update_offset", String(offset));
+}
+
+export async function loadOffset(): Promise<number> {
+  return readInt("update_offset");
+}
+
+export async function saveLastPollTs(epochMs: number): Promise<void> {
+  await writeKey("last_poll_ts", String(epochMs));
+}
+
+export async function loadLastPollTs(): Promise<number> {
+  return readInt("last_poll_ts");
 }
 
 /**
@@ -88,9 +83,8 @@ export function loadLastPollTs(): number {
  * this store ever failed to be continuous, and when" — not an audit log. The
  * full detail is in the poller log line emitted alongside this write.
  */
-export function saveCoverageGap(gap: CoverageGap): void {
-  if (!stmtSaveCoverageGap) throw new Error("store not initialized");
-  stmtSaveCoverageGap.run(JSON.stringify(gap));
+export async function saveCoverageGap(gap: CoverageGap): Promise<void> {
+  await writeKey("coverage_gap", JSON.stringify(gap));
 }
 
 /**
@@ -101,12 +95,11 @@ export function saveCoverageGap(gap: CoverageGap): void {
  * A malformed row returns null rather than throwing: a corrupt diagnostic
  * must never take down the read path it exists to annotate.
  */
-export function loadCoverageGap(): CoverageGap | null {
-  if (!stmtLoadCoverageGap) throw new Error("store not initialized");
-  const row = stmtLoadCoverageGap.get() as { value: string } | undefined;
-  if (!row) return null;
+export async function loadCoverageGap(): Promise<CoverageGap | null> {
+  const value = await readKey("coverage_gap");
+  if (value === null) return null;
   try {
-    const parsed = JSON.parse(row.value) as Partial<CoverageGap>;
+    const parsed = JSON.parse(value) as Partial<CoverageGap>;
     if (
       typeof parsed.at !== "number" ||
       typeof parsed.missedUpdates !== "number"

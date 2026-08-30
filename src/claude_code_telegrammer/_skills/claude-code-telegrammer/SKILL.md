@@ -33,7 +33,7 @@ Defined in `ts/lib/tools.ts`:
 | `reply` | Send a Telegram reply; pass `chat_id` (+ optional `reply_to`/`row_id`) from the inbound message |
 | `react` | Add an emoji reaction to a Telegram message (Telegram's fixed whitelist only) |
 | `edit_message` | Edit a message the bot previously sent (no push notification) |
-| `get_history` | Read past messages (both directions) for a chat from the local SQLite DB |
+| `get_history` | Read past messages (both directions) for a chat from the message store |
 | `get_unread` | List unread inbound messages, optionally filtered by `chat_id` |
 | `mark_read` | Mark messages read, by `chat_id` (all) or `message_ids` (specific rows) |
 | `download_attachment` | Download a Telegram file by `file_id`, returns the local path |
@@ -55,7 +55,7 @@ still honoured with a warning).
 | `BOT_TOKEN` | The Telegram bot token. Empty ⇒ MCP connects but stays disabled (no poller), not a hard failure — every agent spec carries this channel universally. |
 | `AGENT_ID` | Identifies this bridge instance; also derives the per-agent state dir when set to something other than the default `telegram`. |
 | `ALLOWED_USERS` | Comma-separated Telegram user IDs for the DM allowlist (`access.json` is the other source). |
-| `AGENT_STATE_DIR` | Per-agent state directory override (SQLite DB, access.json, lock file, attachments). Renamed from the old `..._STATE_DIR` (PR #35) — the old name is now rejected fail-loud, not silently ignored. |
+| `AGENT_STATE_DIR` | Per-agent state directory override (access.json, lock file, attachments; messages live in PostgreSQL). Renamed from the old `..._STATE_DIR` (PR #35) — the old name is now rejected fail-loud, not silently ignored. |
 
 `CHANNEL_SOURCE` (a fixed constant, not env-configurable) is
 `"claude-code-telegrammer"`.

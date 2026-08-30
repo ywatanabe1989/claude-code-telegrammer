@@ -13,7 +13,14 @@
  */
 
 import { describe, test, expect, afterEach } from "bun:test";
-import { writeFileSync, unlinkSync, mkdirSync, mkdtempSync, rmSync } from "fs";
+import {
+  writeFileSync,
+  unlinkSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { probePoller } from "../lib/health-adapters.js";
@@ -39,6 +46,36 @@ describe("probePoller('self')", () => {
     expect(probePoller("self")).toEqual({ kind: "self", pid: process.pid });
   });
 });
+
+/**
+ * Wait until the spawned child's cmdline actually carries `marker`.
+ *
+ * Bun.spawn RETURNS BEFORE THE CHILD HAS EXEC'D. Until it does,
+ * /proc/<pid>/cmdline is empty or still the parent's, so a probe that reads it
+ * immediately sees no marker and reports the process NOT alive — a failure
+ * about scheduling, not about the code under test.
+ *
+ * Measured on the unchanged branch, same host: both cases in this file pass
+ * when the file runs alone and fail intermittently in a full-suite run, which
+ * is exactly the load-dependent signature of this race. Waiting for the
+ * precondition makes the test assert what it means to assert.
+ */
+async function waitForCmdline(pid: number, marker: string): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      const raw = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+      if (raw.includes(marker)) return;
+    } catch {
+      // The child may not have a /proc entry yet — keep waiting.
+    }
+    await Bun.sleep(10);
+  }
+  throw new Error(
+    `child ${pid} never exec'd with a cmdline containing "${marker}" ` +
+      `within 5s — the fixture, not the probe, is what failed`,
+  );
+}
 
 describe("probePoller('external')", () => {
   test("neither lock file nor pidfile present -> both null/not-alive", () => {
@@ -77,6 +114,7 @@ describe("probePoller('external')", () => {
       stderr: "ignore",
     });
     try {
+      await waitForCmdline(child.pid, "telegram-poller-marker-fixture");
       mkdirSync(STATE_DIR, { recursive: true });
       writeFileSync(PIDFILE_PATH, `${child.pid}\n${Date.now()}\n`);
 
@@ -99,6 +137,7 @@ describe("probePoller('external')", () => {
       stderr: "ignore",
     });
     try {
+      await waitForCmdline(child.pid, "telegram-server-marker-fixture");
       mkdirSync(STATE_DIR, { recursive: true });
       writeFileSync(LOCK_FILE, String(child.pid));
 

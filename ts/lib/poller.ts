@@ -162,12 +162,12 @@ export async function startPolling(): Promise<void> {
 
   // Restore persisted offset from DB
   try {
-    updateOffset = loadOffset();
+    updateOffset = await loadOffset();
     if (updateOffset > 0) {
       log("poller", `resumed from persisted offset ${updateOffset}`);
     }
   } catch (err) {
-    log("poller", "failed to load offset from DB, starting from 0", {
+    log("poller", "failed to load offset from the store, starting from 0", {
       error: String(err),
     });
   }
@@ -294,7 +294,7 @@ export async function startPolling(): Promise<void> {
         // updates). Stamps the in-process + persisted "last successful poll"
         // timestamp the stall watchdog reads. A wedged getUpdates never
         // reaches here, so the heartbeat goes stale and the watchdog fires.
-        recordSuccessfulPoll();
+        await recordSuccessfulPoll();
         if (!Array.isArray(updates)) continue;
         if (updates.length > 0) {
           // processBatch NEVER advances the offset past an un-persisted
@@ -305,7 +305,7 @@ export async function startPolling(): Promise<void> {
           // never silent. See poller-batch.ts.
           updateOffset = await processBatch(updates, updateOffset);
           try {
-            saveOffset(updateOffset);
+            await saveOffset(updateOffset);
           } catch (err) {
             log("poller", "failed to persist offset", { error: String(err) });
           }

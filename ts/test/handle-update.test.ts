@@ -67,8 +67,8 @@ function reactionUpdate(emoji: string, messageId: number) {
   };
 }
 
-beforeAll(() => {
-  initStore();
+beforeAll(async () => {
+  await initStore();
   expect(wakeEnabled()).toBe(true); // sanity: see the NOTE above.
   mkdirSync(STATE_DIR, { recursive: true });
   writeFileSync(ACCESS_FILE, JSON.stringify({ allowFrom: [USER_ID] }));
@@ -146,7 +146,7 @@ describe("handleUpdate: regular text message still reaches wakeTurn (mcp removed
     expect(status).toBe("ok");
 
     // Durably persisted regardless of wake outcome.
-    const history = getHistory(CHAT_ID, 50, 0);
+    const history = await getHistory(CHAT_ID, 50, 0);
     expect(history.some((r) => r.text === "hello from the split poller")).toBe(
       true,
     );

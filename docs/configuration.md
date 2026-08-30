@@ -11,7 +11,7 @@ counts as unset.
 | Variable (`CCT_…` / `CLAUDE_CODE_TELEGRAMMER_…`) | Required | Default | Description |
 |---|---|---|---|
 | `BOT_TOKEN` | To enable | — | Telegram Bot API token. Empty/absent → telegram **disabled** (loud `[WARN]`, MCP still connects, no poller — not a crash). Present-but-invalid → **fail loud** (`getMe` 401/404). |
-| `AGENT_STATE_DIR` | No | `~/.claude-code-telegrammer` (or `-<agent_id>`) | **Per-agent** state dir override (SQLite DB, access.json, lock). The old `…_STATE_DIR` name is renamed and rejected at startup — unset it. |
+| `AGENT_STATE_DIR` | No | `~/.claude-code-telegrammer` (or `-<agent_id>`) | **Per-agent** state dir override (access.json, lock, downloaded attachments; messages live in PostgreSQL, not here). The old `…_STATE_DIR` name is renamed and rejected at startup — unset it. |
 | `ALLOWED_USERS` | No | — | Comma-separated Telegram user IDs for the DM allowlist. |
 | `AGENT_ID` | No | `telegram` | Per-agent identity; also derives the default state dir (see below). |
 | `HOST_NAME` | No | `os.hostname()` | Hostname stored with each message. |

@@ -44,21 +44,30 @@ async function runPoller(
     `globalThis.fetch = (${fetchStub}) as typeof fetch;\n` +
       `const { startPolling } = await import(${JSON.stringify(join(LIB, "poller.ts"))});\n` +
       `const { initStore } = await import(${JSON.stringify(join(LIB, "store.ts"))});\n` +
-      `initStore();\n` +
+      `await initStore();\n` +
       `if (process.env.SEED_OFFSET) {\n` +
       `  const m = await import(${JSON.stringify(join(LIB, "store-meta.ts"))});\n` +
-      `  m.saveOffset(Number(process.env.SEED_OFFSET));\n` +
+      `  await m.saveOffset(Number(process.env.SEED_OFFSET));\n` +
       `}\n` +
       `await startPolling();\n` +
       `if (process.env.SEED_OFFSET) {\n` +
       `  const m = await import(${JSON.stringify(join(LIB, "store-meta.ts"))});\n` +
-      `  process.stderr.write("FINAL_OFFSET=" + m.loadOffset() + "\\n");\n` +
+      `  process.stderr.write("FINAL_OFFSET=" + (await m.loadOffset()) + "\\n");\n` +
       `}\n` +
       `process.exit(process.exitCode ?? 0);\n`,
   );
 
   const proc = Bun.spawn(["bun", "run", driver], {
-    env: { ...process.env, CCT_STATE_DIR: dir, ...env },
+    // Its own namespace: this child seeds a getUpdates offset, and the shared
+    // suite namespace has tests asserting on that exact key. The cct_test_
+    // prefix keeps lib/hermetic-guard.ts satisfied, and the epoch in third
+    // position is what the preload's stale-namespace sweep reads.
+    env: {
+      ...process.env,
+      CCT_STATE_DIR: dir,
+      CCT_STORE_SCHEMA: `cct_test_${Date.now()}_refusal_${process.pid}`,
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -65,7 +65,7 @@ runs its own bot, its own message store, and fails loud on misconfiguration.
 <tr valign="top">
   <td align="center">5</td>
   <td><h4>No message persistence</h4>Messages vanish after delivery. No way to search past conversations, track read status, or build context from history.</td>
-  <td><h4>SQLite message store</h4>All messages persisted in WAL-mode SQLite with full-text search, reply threading (reply_to_message_id), read/replied tracking, and attachment metadata.</td>
+  <td><h4>PostgreSQL message store</h4>All messages persisted to the fleet's PostgreSQL server, one schema per agent, with text search, reply threading (reply_to_message_id), read/replied tracking, and attachment metadata.</td>
 </tr>
 <tr valign="top">
   <td align="center">6</td>

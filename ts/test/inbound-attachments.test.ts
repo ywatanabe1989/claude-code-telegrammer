@@ -15,7 +15,7 @@
  *
  * These tests exercise the same pipeline pieces poller.ts uses
  * (buildInboundText + attachmentDescriptor → saveInbound →
- * insertAttachment → tools-messages handlers) against a real SQLite
+ * insertAttachment → tools-messages handlers) against a real
  * store. The only injected piece is the download function — proving the
  * short-circuit paths never touch the network.
  */
@@ -65,9 +65,12 @@ function photoUpdate(messageId: number, fileId: string) {
 }
 
 /** Same persistence steps poller.ts performs for an inbound photo. */
-function savePhotoMessage(messageId: number, fileId: string): number {
+async function savePhotoMessage(
+  messageId: number,
+  fileId: string,
+): Promise<number> {
   const msg = photoUpdate(messageId, fileId).message;
-  const rowId = saveInbound({
+  const rowId = await saveInbound({
     chat_id: CHAT,
     message_id: String(msg.message_id),
     user_id: String(msg.from.id),
@@ -81,7 +84,7 @@ function savePhotoMessage(messageId: number, fileId: string): number {
     raw_json: JSON.stringify(photoUpdate(messageId, fileId)),
   });
   expect(rowId).not.toBeNull();
-  insertAttachment(rowId!, {
+  await insertAttachment(rowId!, {
     kind: "photo",
     file_id: fileId,
     file_unique_id: "u_l",
@@ -90,8 +93,11 @@ function savePhotoMessage(messageId: number, fileId: string): number {
   return rowId!;
 }
 
-function saveTextMessage(messageId: number, text: string): number {
-  const rowId = saveInbound({
+async function saveTextMessage(
+  messageId: number,
+  text: string,
+): Promise<number> {
+  const rowId = await saveInbound({
     chat_id: CHAT,
     message_id: String(messageId),
     user_id: "42",
@@ -108,8 +114,8 @@ function saveTextMessage(messageId: number, text: string): number {
   return rowId!;
 }
 
-beforeAll(() => {
-  initStore();
+beforeAll(async () => {
+  await initStore();
   mkdirSync(FILES_DIR, { recursive: true });
   // handleGetHistory/handleGetUnread gate on the allowlist — permit the
   // test chat the same way an operator's access.json would.
@@ -161,14 +167,14 @@ function parseMessages(res: { content: Array<{ text: string }> }): Array<any> {
 }
 
 describe("get_history / get_unread expose the attachments array", () => {
-  test("history row carries attachments with local_path after download-complete", () => {
-    const rowId = savePhotoMessage(9010, "FID_HISTORY");
+  test("history row carries attachments with local_path after download-complete", async () => {
+    const rowId = await savePhotoMessage(9010, "FID_HISTORY");
     const localPath = join(FILES_DIR, "history.jpg");
     writeFileSync(localPath, "jpegbytes");
     // Simulate the background auto-download completing.
-    markAttachmentDownloaded(rowId, "FID_HISTORY", localPath);
+    await markAttachmentDownloaded(rowId, "FID_HISTORY", localPath);
 
-    const res = handleGetHistory({ chat_id: CHAT, limit: 50 });
+    const res = await handleGetHistory({ chat_id: CHAT, limit: 50 });
     expect(res.isError).toBeUndefined();
     const rows = parseMessages(res);
     const row = rows.find((r) => r.id === rowId);
@@ -184,18 +190,18 @@ describe("get_history / get_unread expose the attachments array", () => {
     expect(row.attachments[0].downloaded_at).toBeTruthy();
   });
 
-  test("plain-text rows carry NO attachments key (no empty-array noise)", () => {
-    const rowId = saveTextMessage(9011, "just words");
-    const res = handleGetHistory({ chat_id: CHAT, limit: 50 });
+  test("plain-text rows carry NO attachments key (no empty-array noise)", async () => {
+    const rowId = await saveTextMessage(9011, "just words");
+    const res = await handleGetHistory({ chat_id: CHAT, limit: 50 });
     const rows = parseMessages(res);
     const row = rows.find((r) => r.id === rowId);
     expect(row).toBeDefined();
     expect("attachments" in row).toBe(false);
   });
 
-  test("get_unread includes the same attachments array", () => {
-    const rowId = savePhotoMessage(9012, "FID_UNREAD");
-    const res = handleGetUnread({ chat_id: CHAT });
+  test("get_unread includes the same attachments array", async () => {
+    const rowId = await savePhotoMessage(9012, "FID_UNREAD");
+    const res = await handleGetUnread({ chat_id: CHAT });
     const rows = parseMessages(res);
     const row = rows.find((r) => r.id === rowId);
     expect(row).toBeDefined();
@@ -203,9 +209,9 @@ describe("get_history / get_unread expose the attachments array", () => {
     expect(row.attachments[0].local_path).toBeNull();
   });
 
-  test("every read carries a coverage verdict, so [] is never ambiguous", () => {
+  test("every read carries a coverage verdict, so [] is never ambiguous", async () => {
     const parsed = JSON.parse(
-      handleGetUnread({ chat_id: CHAT }).content[0].text,
+      (await handleGetUnread({ chat_id: CHAT })).content[0].text,
     );
     expect(parsed).toHaveProperty("coverage");
     expect(parsed).toHaveProperty("count");
@@ -218,10 +224,10 @@ describe("get_history / get_unread expose the attachments array", () => {
 
 describe("download_attachment by row_id / file_id", () => {
   test("row_id with existing local_path returns it WITHOUT network", async () => {
-    const rowId = savePhotoMessage(9020, "FID_CACHED");
+    const rowId = await savePhotoMessage(9020, "FID_CACHED");
     const localPath = join(FILES_DIR, "cached.jpg");
     writeFileSync(localPath, "jpegbytes");
-    markAttachmentDownloaded(rowId, "FID_CACHED", localPath);
+    await markAttachmentDownloaded(rowId, "FID_CACHED", localPath);
 
     const res = await handleDownloadAttachment({ row_id: rowId }, noNetwork);
     expect(res.isError).toBeUndefined();
@@ -229,10 +235,10 @@ describe("download_attachment by row_id / file_id", () => {
   });
 
   test("file_id with existing local_path also short-circuits", async () => {
-    const rowId = savePhotoMessage(9021, "FID_CACHED_BY_ID");
+    const rowId = await savePhotoMessage(9021, "FID_CACHED_BY_ID");
     const localPath = join(FILES_DIR, "cached-by-id.jpg");
     writeFileSync(localPath, "jpegbytes");
-    markAttachmentDownloaded(rowId, "FID_CACHED_BY_ID", localPath);
+    await markAttachmentDownloaded(rowId, "FID_CACHED_BY_ID", localPath);
 
     const res = await handleDownloadAttachment(
       { file_id: "FID_CACHED_BY_ID" },
@@ -243,7 +249,7 @@ describe("download_attachment by row_id / file_id", () => {
   });
 
   test("row_id not yet downloaded: downloads, routes to the row's chat, records local_path", async () => {
-    const rowId = savePhotoMessage(9022, "FID_FRESH");
+    const rowId = await savePhotoMessage(9022, "FID_FRESH");
     const localPath = join(FILES_DIR, "fresh.jpg");
     const calls: Array<[string, string]> = [];
     const stub = async (fileId: string, chatId: string) => {
@@ -258,13 +264,13 @@ describe("download_attachment by row_id / file_id", () => {
     expect(calls).toEqual([["FID_FRESH", CHAT]]);
 
     // The download was recorded — a second call must short-circuit.
-    expect(attachmentsForRows([rowId])[0].local_path).toBe(localPath);
+    expect((await attachmentsForRows([rowId]))[0].local_path).toBe(localPath);
     const res2 = await handleDownloadAttachment({ row_id: rowId }, noNetwork);
     expect(res2.content[0].text).toBe(`downloaded to: ${localPath}`);
   });
 
   test("row_id with no attachment: clear error, no network", async () => {
-    const rowId = saveTextMessage(9023, "no file here");
+    const rowId = await saveTextMessage(9023, "no file here");
     const res = await handleDownloadAttachment({ row_id: rowId }, noNetwork);
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain(

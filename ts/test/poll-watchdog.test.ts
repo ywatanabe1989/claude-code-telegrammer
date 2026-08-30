@@ -174,25 +174,25 @@ describe("resolveStallThresholdMs — env alias + default", () => {
 });
 
 describe("recordSuccessfulPoll — in-process + persisted heartbeat", () => {
-  beforeAll(() => {
-    initStore();
+  beforeAll(async () => {
+    await initStore();
   });
   beforeEach(() => {
     _resetHeartbeat();
   });
 
-  test("stamps the in-process heartbeat and persists it to the DB", () => {
+  test("stamps the in-process heartbeat and persists it to the DB", async () => {
     const t = 1_720_500_000_000;
-    recordSuccessfulPoll(t);
+    await recordSuccessfulPoll(t);
     expect(getLastSuccessfulPoll()).toBe(t);
     // Persisted so an out-of-band health probe can read poll-freshness.
-    expect(loadLastPollTs()).toBe(t);
+    expect(await loadLastPollTs()).toBe(t);
   });
 
-  test("a later poll advances both the in-process and persisted stamps", () => {
-    recordSuccessfulPoll(1_000);
-    recordSuccessfulPoll(2_000);
+  test("a later poll advances both the in-process and persisted stamps", async () => {
+    await recordSuccessfulPoll(1_000);
+    await recordSuccessfulPoll(2_000);
     expect(getLastSuccessfulPoll()).toBe(2_000);
-    expect(loadLastPollTs()).toBe(2_000);
+    expect(await loadLastPollTs()).toBe(2_000);
   });
 });

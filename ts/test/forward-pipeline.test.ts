@@ -4,7 +4,7 @@
  * No MCP Server mock — instead we exercise the SAME building blocks
  * poller.ts uses (buildInboundText + parseForward + saveInbound +
  * insertAttachment) against real Telegram update JSON, then read the
- * persisted row back from SQLite to confirm caption + attachment
+ * persisted row back out of the store to confirm caption + attachment
  * file_id + forward_json all coexist.
  */
 
@@ -18,11 +18,11 @@ import {
 import { parseForward, buildInboundText } from "../lib/forward.js";
 
 describe("inbound pipeline: forward + media + caption survive together", () => {
-  beforeAll(() => {
-    initStore();
+  beforeAll(async () => {
+    await initStore();
   });
 
-  test("forwarded photo with caption: agent-text has banner + caption AND file_id is persisted", () => {
+  test("forwarded photo with caption: agent-text has banner + caption AND file_id is persisted", async () => {
     // Real Telegram update shape: a photo forwarded from a channel,
     // with a caption typed by the forwarder.
     const update = {
@@ -91,9 +91,9 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
     expect(fwd!.original_message_id).toBe("4242");
     expect(fwd!.signature).toBe("Editor");
 
-    // 3) Persist to SQLite — caption + forward_json + attachment all
+    // 3) Persist to the store — caption + forward_json + attachment all
     //    coexist for one row.
-    const rowId = saveInbound({
+    const rowId = await saveInbound({
       chat_id: String(msg.chat.id),
       message_id: String(msg.message_id),
       user_id: String(msg.from.id),
@@ -111,14 +111,14 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
 
     // Insert the LARGEST photo size — mirrors poller.ts behavior
     const largest = msg.photo[msg.photo.length - 1];
-    insertAttachment(rowId!, {
+    await insertAttachment(rowId!, {
       kind: "photo",
       file_id: largest.file_id,
       file_unique_id: largest.file_unique_id,
       file_size: largest.file_size,
     });
 
-    const rows = getHistory(String(msg.chat.id));
+    const rows = await getHistory(String(msg.chat.id));
     const row = rows.find((r) => r.id === rowId)!;
     expect(row.text).toContain("[forwarded from Daily News,");
     expect(row.text).toContain("Big story today");
@@ -128,7 +128,7 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
     expect(stored.original_message_id).toBe("4242");
   });
 
-  test("document + caption (NOT forwarded): caption + file_id both survive", () => {
+  test("document + caption (NOT forwarded): caption + file_id both survive", async () => {
     const update = {
       update_id: 200002,
       message: {
@@ -155,7 +155,7 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
     expect(text).toBe("(document: spec.pdf) please review");
     expect(parseForward(msg)).toBeNull();
 
-    const rowId = saveInbound({
+    const rowId = await saveInbound({
       chat_id: String(msg.chat.id),
       message_id: String(msg.message_id),
       user_id: String(msg.from.id),
@@ -169,7 +169,7 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
       raw_json: JSON.stringify(update),
     });
     expect(rowId).not.toBeNull();
-    insertAttachment(rowId!, {
+    await insertAttachment(rowId!, {
       kind: "document",
       file_id: msg.document.file_id,
       file_unique_id: msg.document.file_unique_id,
@@ -178,13 +178,13 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
       file_size: msg.document.file_size,
     });
 
-    const rows = getHistory(String(msg.chat.id));
+    const rows = await getHistory(String(msg.chat.id));
     const row = rows.find((r) => r.id === rowId)!;
     expect(row.text).toBe("(document: spec.pdf) please review");
     expect(row.forward_json).toBeNull();
   });
 
-  test("forwarded document (legacy fields) + caption: full survival", () => {
+  test("forwarded document (legacy fields) + caption: full survival", async () => {
     const update = {
       update_id: 200003,
       message: {
@@ -228,7 +228,7 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
     expect(fwd!.from_name).toBe("Frank Original");
     expect(fwd!.from_id).toBe("88888");
 
-    const rowId = saveInbound({
+    const rowId = await saveInbound({
       chat_id: String(msg.chat.id),
       message_id: String(msg.message_id),
       user_id: String(msg.from.id),
@@ -243,7 +243,7 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
       raw_json: JSON.stringify(update),
     });
     expect(rowId).not.toBeNull();
-    insertAttachment(rowId!, {
+    await insertAttachment(rowId!, {
       kind: "document",
       file_id: msg.document.file_id,
       file_unique_id: msg.document.file_unique_id,
@@ -252,7 +252,7 @@ describe("inbound pipeline: forward + media + caption survive together", () => {
       file_size: msg.document.file_size,
     });
 
-    const rows = getHistory(String(msg.chat.id));
+    const rows = await getHistory(String(msg.chat.id));
     const row = rows.find((r) => r.id === rowId)!;
     expect(row.text).toContain("[forwarded from Frank Original,");
     expect(row.text).toContain("shared by Eve");

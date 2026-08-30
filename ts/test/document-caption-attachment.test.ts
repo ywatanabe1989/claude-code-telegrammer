@@ -35,11 +35,11 @@ import {
 import { buildInboundText, parseForward } from "../lib/forward.js";
 
 describe("regression: document+caption preserves BOTH placeholder AND caption", () => {
-  beforeAll(() => {
-    initStore();
+  beforeAll(async () => {
+    await initStore();
   });
 
-  test("plain document + caption (the operator-confirmed repro)", () => {
+  test("plain document + caption (the operator-confirmed repro)", async () => {
     // Real Telegram update shape: a .md file sent with a caption.
     const update = {
       update_id: 700001,
@@ -76,7 +76,7 @@ describe("regression: document+caption preserves BOTH placeholder AND caption", 
 
     // ─── ASSERTION B: round-trip through saveInbound + insertAttachment
     //                  + getHistory — the SAME pipeline poller.ts uses.
-    const rowId = saveInbound({
+    const rowId = await saveInbound({
       chat_id: String(msg.chat.id),
       message_id: String(msg.message_id),
       user_id: String(msg.from.id),
@@ -91,7 +91,7 @@ describe("regression: document+caption preserves BOTH placeholder AND caption", 
     });
     expect(rowId).not.toBeNull();
 
-    insertAttachment(rowId!, {
+    await insertAttachment(rowId!, {
       kind: "document",
       file_id: msg.document.file_id,
       file_unique_id: msg.document.file_unique_id,
@@ -100,7 +100,7 @@ describe("regression: document+caption preserves BOTH placeholder AND caption", 
       file_size: msg.document.file_size,
     });
 
-    const rows = getHistory(String(msg.chat.id));
+    const rows = await getHistory(String(msg.chat.id));
     const row = rows.find((r) => r.id === rowId)!;
 
     // ─── ASSERTION C: stored row carries the combined text — what

@@ -247,19 +247,26 @@ describe("db_schema_current", () => {
     expect(c.detail).toContain("plausible");
   });
 
-  test("unreadable DB → fail with a permissions hint naming the REAL file", () => {
+  test("an unreadable store → fail with a hint naming what to actually check", () => {
     const c = byName(
       buildHealthReport(
-        healthyInputs({ db: { exists: true, error: "SQLITE_CANTOPEN" } }),
+        healthyInputs({
+          db: { exists: true, error: "connection refused" },
+        }),
       ),
       "db_schema_current",
     );
     expect(c.ok).toBe(false);
-    // The store was renamed to claude-code-telegrammer.db; `messages.db` is
-    // the LEGACY name and now exists only in abandoned pre-migration dirs.
-    // A hint that names it sends the operator to edit a dead file.
-    expect(c.hint).toContain("claude-code-telegrammer.db");
-    expect(c.hint).not.toContain("messages.db");
+    // THE RULE THIS CASE ENFORCES, restated for the current store: the hint
+    // must name the thing the operator can actually go and look at. It used
+    // to check that the hint named the live database FILE rather than the
+    // abandoned legacy one, because sending him to edit a dead file wastes
+    // the trip. There is no file now — the equivalent mistake would be a hint
+    // pointing at the state directory — so it must name the connection and
+    // the namespace instead.
+    expect(c.hint).toContain("SCITEX_STORE_DSN");
+    expect(c.hint).toContain("schema");
+    expect(c.hint).not.toContain("state dir");
   });
 
   // ── The 2026-08-11 false alarm ──────────────────────────────────────────

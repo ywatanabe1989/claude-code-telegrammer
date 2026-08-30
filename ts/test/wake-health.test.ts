@@ -8,7 +8,7 @@
  * from lib/handle-update.ts, which only runs in the poller process) and
  * getWakeFailureState (called from the `health` MCP tool, which runs in the
  * SEPARATE MCP-server process) can no longer share in-process module state.
- * The describe block below pins the DB-persistence half of that fix,
+ * The second describe block below pins the persistence half of that fix,
  * mirroring how ts/test/poll-watchdog.test.ts pins saveLastPollTs/
  * loadLastPollTs for the poll heartbeat.
  */
@@ -22,7 +22,6 @@ import {
   afterEach,
   afterAll,
 } from "bun:test";
-import { Database } from "bun:sqlite";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import {
   recordWakeFailure,
@@ -32,7 +31,8 @@ import {
   _setPersistAttempt,
   _resetPersistAttempt,
 } from "../lib/wake-health.js";
-import { initStore, DB_PATH } from "../lib/store.js";
+import { initStore } from "../lib/store.js";
+import { query } from "./helpers/store-access.js";
 import {
   setSystemAlertSender,
   _resetSystemAlertSender,
@@ -41,92 +41,92 @@ import { _resetCache } from "../lib/access.js";
 import { ACCESS_FILE, STATE_DIR } from "../lib/config.js";
 
 describe("wake failure tracker", () => {
-  beforeEach(() => {
-    _resetWakeFailureState();
+  beforeEach(async () => {
+    await _resetWakeFailureState();
   });
 
-  test("starts at count 0, everything else null", () => {
-    const s = getWakeFailureState();
+  test("starts at count 0, everything else null", async () => {
+    const s = await getWakeFailureState();
     expect(s.count).toBe(0);
     expect(s.lastCategory).toBeNull();
     expect(s.lastReason).toBeNull();
     expect(s.lastAtMs).toBeNull();
   });
 
-  test("one failure → count 1, records category/reason/timestamp", () => {
-    recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
-    const s = getWakeFailureState();
+  test("one failure → count 1, records category/reason/timestamp", async () => {
+    await recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
+    const s = await getWakeFailureState();
     expect(s.count).toBe(1);
     expect(s.lastCategory).toBe("connection_refused");
     expect(s.lastReason).toBe("connect ECONNREFUSED");
     expect(s.lastAtMs).toBe(1000);
   });
 
-  test("consecutive failures increment the count and overwrite last-seen fields", () => {
-    recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
-    recordWakeFailure("timeout", "network timeout", 2000);
-    recordWakeFailure("server_error", "HTTP 500", 3000);
-    const s = getWakeFailureState();
+  test("consecutive failures increment the count and overwrite last-seen fields", async () => {
+    await recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
+    await recordWakeFailure("timeout", "network timeout", 2000);
+    await recordWakeFailure("server_error", "HTTP 500", 3000);
+    const s = await getWakeFailureState();
     expect(s.count).toBe(3);
     expect(s.lastCategory).toBe("server_error");
     expect(s.lastReason).toBe("HTTP 500");
     expect(s.lastAtMs).toBe(3000);
   });
 
-  test("a success resets the counter to zero and clears last-seen fields", () => {
-    recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
-    recordWakeFailure("connection_refused", "connect ECONNREFUSED", 2000);
-    recordWakeSuccess();
-    const s = getWakeFailureState();
+  test("a success resets the counter to zero and clears last-seen fields", async () => {
+    await recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
+    await recordWakeFailure("connection_refused", "connect ECONNREFUSED", 2000);
+    await recordWakeSuccess();
+    const s = await getWakeFailureState();
     expect(s.count).toBe(0);
     expect(s.lastCategory).toBeNull();
     expect(s.lastReason).toBeNull();
     expect(s.lastAtMs).toBeNull();
   });
 
-  test("failure after a success starts a fresh count of 1, not a continuation", () => {
-    recordWakeFailure("connection_refused", "a", 1000);
-    recordWakeSuccess();
-    recordWakeFailure("timeout", "b", 2000);
-    const s = getWakeFailureState();
+  test("failure after a success starts a fresh count of 1, not a continuation", async () => {
+    await recordWakeFailure("connection_refused", "a", 1000);
+    await recordWakeSuccess();
+    await recordWakeFailure("timeout", "b", 2000);
+    const s = await getWakeFailureState();
     expect(s.count).toBe(1);
     expect(s.lastCategory).toBe("timeout");
   });
 
-  test("defaults `now` to Date.now() when not injected", () => {
+  test("defaults `now` to Date.now() when not injected", async () => {
     const before = Date.now();
-    recordWakeFailure("unknown", "x");
+    await recordWakeFailure("unknown", "x");
     const after = Date.now();
-    const s = getWakeFailureState();
+    const s = await getWakeFailureState();
     expect(s.lastAtMs).not.toBeNull();
     expect(s.lastAtMs!).toBeGreaterThanOrEqual(before);
     expect(s.lastAtMs!).toBeLessThanOrEqual(after);
   });
 });
 
-describe("wake failure tracker: cross-process DB persistence", () => {
-  beforeAll(() => {
-    initStore();
+describe("wake failure tracker: cross-process persistence", () => {
+  beforeAll(async () => {
+    await initStore();
   });
-  beforeEach(() => {
-    _resetWakeFailureState();
+  beforeEach(async () => {
+    await _resetWakeFailureState();
   });
 
-  test("recordWakeFailure persists the state to the shared DB", () => {
-    recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
+  async function persistedState(): Promise<unknown> {
+    const rows = await query<{ value: string }>(
+      "SELECT value FROM ${SCHEMA}.meta WHERE key = 'wake_failure_state'",
+    );
+    expect(rows[0]).toBeDefined();
+    return JSON.parse(rows[0].value);
+  }
 
-    // Read back via a totally independent DB handle — the same "many
-    // independent handles against one WAL-mode file" shape a SEPARATE
-    // process (the MCP server, post-split) would use.
-    const db = new Database(DB_PATH, { readonly: true });
-    const row = db
-      .prepare(`SELECT value FROM meta WHERE key = 'wake_failure_state'`)
-      .get() as { value: string } | undefined;
-    db.close();
+  test("recordWakeFailure persists the state to the shared store", async () => {
+    await recordWakeFailure("connection_refused", "connect ECONNREFUSED", 1000);
 
-    expect(row).toBeDefined();
-    const parsed = JSON.parse(row!.value);
-    expect(parsed).toEqual({
+    // Read back with a plain query against the same row a SEPARATE process
+    // (the MCP server, post-split) would read — not through the module's own
+    // getter, which could hand back its in-process copy and prove nothing.
+    expect(await persistedState()).toEqual({
       count: 1,
       lastCategory: "connection_refused",
       lastReason: "connect ECONNREFUSED",
@@ -134,18 +134,11 @@ describe("wake failure tracker: cross-process DB persistence", () => {
     });
   });
 
-  test("recordWakeSuccess persists the cleared state", () => {
-    recordWakeFailure("timeout", "t", 1);
-    recordWakeSuccess();
+  test("recordWakeSuccess persists the cleared state", async () => {
+    await recordWakeFailure("timeout", "t", 1);
+    await recordWakeSuccess();
 
-    const db = new Database(DB_PATH, { readonly: true });
-    const row = db
-      .prepare(`SELECT value FROM meta WHERE key = 'wake_failure_state'`)
-      .get() as { value: string } | undefined;
-    db.close();
-
-    expect(row).toBeDefined();
-    expect(JSON.parse(row!.value)).toEqual({
+    expect(await persistedState()).toEqual({
       count: 0,
       lastCategory: null,
       lastReason: null,
@@ -153,32 +146,30 @@ describe("wake failure tracker: cross-process DB persistence", () => {
     });
   });
 
-  test("getWakeFailureState prefers the persisted value over stale in-process vars — the cross-process case", () => {
+  test("getWakeFailureState prefers the persisted value over stale in-process vars — the cross-process case", async () => {
     // In THIS process's own view: one failure recorded.
-    recordWakeFailure("timeout", "in-process view", 1000);
+    await recordWakeFailure("timeout", "in-process view", 1000);
 
     // Simulate a DIFFERENT process (the real poller, post-split) having
-    // written a DIFFERENT value directly to the shared DB — exactly the
+    // written a DIFFERENT value directly to the shared store — exactly the
     // situation the MCP-server process is in: its own in-process vars only
     // reflect what IT called record*() with (normally nothing, since only
-    // the poller process ever does), but the shared DB reflects what the
-    // poller process actually saw.
-    const db = new Database(DB_PATH);
-    db.prepare(
-      `INSERT INTO meta (key, value) VALUES ('wake_failure_state', ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    ).run(
-      JSON.stringify({
-        count: 7,
-        lastCategory: "server_error",
-        lastReason: "cross-process write",
-        lastAtMs: 9999,
-      }),
+    // the poller process ever does), but the store reflects what the poller
+    // process actually saw.
+    await query(
+      "INSERT INTO ${SCHEMA}.meta (key, value) VALUES ('wake_failure_state', $1)" +
+        " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+      [
+        JSON.stringify({
+          count: 7,
+          lastCategory: "server_error",
+          lastReason: "cross-process write",
+          lastAtMs: 9999,
+        }),
+      ],
     );
-    db.close();
 
-    const state = getWakeFailureState();
-    expect(state).toEqual({
+    expect(await getWakeFailureState()).toEqual({
       count: 7,
       lastCategory: "server_error",
       lastReason: "cross-process write",
@@ -186,18 +177,11 @@ describe("wake failure tracker: cross-process DB persistence", () => {
     });
   });
 
-  test("_resetWakeFailureState clears the persisted value too (no stale leak into the next test)", () => {
-    recordWakeFailure("auth", "x", 1);
-    _resetWakeFailureState();
+  test("_resetWakeFailureState clears the persisted value too (no stale leak into the next test)", async () => {
+    await recordWakeFailure("auth", "x", 1);
+    await _resetWakeFailureState();
 
-    const db = new Database(DB_PATH, { readonly: true });
-    const row = db
-      .prepare(`SELECT value FROM meta WHERE key = 'wake_failure_state'`)
-      .get() as { value: string } | undefined;
-    db.close();
-
-    expect(row).toBeDefined();
-    expect(JSON.parse(row!.value)).toEqual({
+    expect(await persistedState()).toEqual({
       count: 0,
       lastCategory: null,
       lastReason: null,
@@ -224,13 +208,13 @@ describe("persist(): retry + loud-alert-on-exhaustion (adversarial-review findin
     _resetCache();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     alerts = [];
     setSystemAlertSender(async (_chatId, text) => {
       alerts.push(text);
       return { ok: true };
     });
-    _resetWakeFailureState();
+    await _resetWakeFailureState();
     alerts = []; // _resetWakeFailureState's own persist() may itself alert
   });
 
@@ -239,52 +223,49 @@ describe("persist(): retry + loud-alert-on-exhaustion (adversarial-review findin
     _resetSystemAlertSender();
   });
 
-  test("a persist that fails every attempt is retried 2 times total (1 extra attempt, round-2 adversarial-review finding #3), then broadcasts a loud alert", () => {
+  // WHAT THIS CASE NO LONGER ASSERTS, AND WHY. It used to also pin the two
+  // busy-timeout values handed to each attempt ([2000, 500]). Those numbers
+  // described a whole-file lock that a second connection could block on, and
+  // they were tuned because the block ran on the same thread whose job is
+  // staying responsive to Telegram polling. A single-row upsert on a server
+  // does not queue that way, so persistAttempt takes no timeout argument any
+  // more and asserting on one would be asserting on nothing. The retry COUNT
+  // and the loud alert are what the finding was actually about, and both are
+  // still pinned.
+  test("a persist that fails every attempt is retried 2 times total, then broadcasts a loud alert", async () => {
     let attempts = 0;
-    const seenBusyTimeouts: number[] = [];
-    _setPersistAttempt((busyTimeoutMs) => {
+    _setPersistAttempt(async () => {
       attempts += 1;
-      seenBusyTimeouts.push(busyTimeoutMs);
-      throw new Error("simulated disk-full");
+      throw new Error("simulated store outage");
     });
 
-    recordWakeFailure("server_error", "HTTP 500", 12345);
+    await recordWakeFailure("server_error", "HTTP 500", 12345);
 
     expect(attempts).toBe(2);
-    // First attempt uses the "normal" (longer) busy_timeout; the retry
-    // uses a deliberately SHORT one — see wake-health.ts's constants for
-    // why (worst-case blocking time was ~15s with 3x5000ms; now a small
-    // multiple of a second).
-    expect(seenBusyTimeouts).toEqual([2000, 500]);
     expect(alerts.length).toBe(1);
     expect(alerts[0]).toContain("FATAL");
     expect(alerts[0]).toContain("2 attempts");
-    expect(alerts[0]).toContain("simulated disk-full");
+    expect(alerts[0]).toContain("simulated store outage");
   });
 
-  test("a persist that fails once then succeeds does NOT alert (transient recovery)", () => {
+  test("a persist that fails once then succeeds does NOT alert (transient recovery)", async () => {
     let attempts = 0;
-    _setPersistAttempt((busyTimeoutMs) => {
+    _setPersistAttempt(async () => {
       attempts += 1;
-      if (attempts === 1) {
-        expect(busyTimeoutMs).toBe(2000); // first attempt
-        throw new Error("transient blip");
-      }
-      expect(busyTimeoutMs).toBe(500); // retry
+      if (attempts === 1) throw new Error("transient blip");
       // second attempt: succeeds (a no-op stand-in is enough — persist()
       // only cares whether persistAttempt() throws, not what it does).
     });
 
-    expect(() => recordWakeSuccess()).not.toThrow();
+    await recordWakeSuccess();
     expect(attempts).toBe(2);
     expect(alerts.length).toBe(0);
   });
 
-  test("a fully healthy persist never retries and never alerts", () => {
-    // Uses the REAL persistAttempt (restored in afterEach of the previous
-    // describe's tests too, but explicit here for clarity).
+  test("a fully healthy persist never retries and never alerts", async () => {
+    // Uses the REAL persistAttempt against the real store.
     _resetPersistAttempt();
-    recordWakeFailure("timeout", "t", 1);
+    await recordWakeFailure("timeout", "t", 1);
     expect(alerts.length).toBe(0);
   });
 });

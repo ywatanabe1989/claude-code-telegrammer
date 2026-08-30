@@ -33,7 +33,7 @@ the poller's pidfile. The two processes share internal modules (`ts/lib/`):
 | `handle-update` / `poller-batch` / `poll-watchdog` | Per-update handling, batch/durability retry, ingestion-stall alarm — all mcp-independent |
 | `notify-relay` | Cross-process inbound live-push relay for interactive-CLI (`!wakeEnabled()`) mode — poller writes, MCP server reads+delivers |
 | `loudfail` | Direct-Telegram-API alarms/replies that must work whether or not the agent/mcp side is reachable |
-| `store` | SQLite (WAL) message persistence + dedup + read/replied tracking; opened independently by both processes |
+| `store` | PostgreSQL message persistence + dedup + read/replied tracking; both processes share one pooled connection to the agent's own schema |
 | `tools` | The 10 MCP tools (see [interfaces](interfaces.md)) — MCP-server process only |
 | `attachments` | Background download queue for inbound files |
 | `access` | Allowlist gating (`access.json` + `CCT_ALLOWED_USERS`), mtime-cached |
@@ -148,9 +148,21 @@ interactive session moving:
 
 Throttled: minimum inter-response interval, burst limit (10 in 3s), same-state delay.
 
-## SQLite schema (v2)
+## Store schema (v3)
 
-All messages persist in `$CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR/messages.db` (WAL mode).
+All messages persist in PostgreSQL, in **one schema per agent** —
+`cct_<sanitized agent id>` on the server named by `SCITEX_STORE_DSN` (or the
+telegrammer-scoped `CCT_STORE_DSN`). The connection string comes from the
+environment and there is no local-file fallback: with neither variable set the
+bridge refuses to start rather than storing the operator's messages somewhere
+nobody reads.
+
+The schema is per-agent because in a Telegram **private chat `chat.id` is the
+human's own user id**, which is identical across every bot he talks to. Two
+agents therefore receive different message streams carrying the SAME
+`chat_id`, and `(chat_id, message_id)` collides between them. One namespace
+per agent reproduces exactly the isolation the previous per-agent database
+file had, keyed the same way.
 
 - **messages** — direction, chat_id, message_id, user_id, username, text,
   timestamps (telegram_ts, received_at, read_at, replied_at), threading
