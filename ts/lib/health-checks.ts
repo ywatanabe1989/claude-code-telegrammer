@@ -419,10 +419,10 @@ export function checkDbSchemaCurrent(probe: DbProbe): CheckOutcome {
       entry: {
         name: "db_schema_current",
         ok: false,
-        detail: `could not read claude-code-telegrammer.db: ${probe.error}`,
+        detail: `could not read the message store: ${probe.error}`,
         hint:
-          "check claude-code-telegrammer.db permissions in the state dir; if " +
-          "corrupt, move it aside while the poller is stopped and restart.",
+          "check that the store server named by SCITEX_STORE_DSN is reachable " +
+          "and that this agent's role can read its own schema.",
       },
       warn: false,
     };
@@ -434,9 +434,9 @@ export function checkDbSchemaCurrent(probe: DbProbe): CheckOutcome {
         ok: false,
         detail: `meta.schema_version=${probe.schemaVersion ?? "(missing)"} but this code writes ${SCHEMA_VERSION}`,
         hint:
-          "claude-code-telegrammer.db was written by a different code version " +
-          "— back it up / move it aside while the poller is stopped, then " +
-          "restart the bridge to recreate it at the current schema.",
+          "this agent's schema was written by a different code version — " +
+          "restart the bridge so initStore() brings it forward, and if the " +
+          "mismatch persists, read docs/adr/0001-postgres-message-store.md.",
       },
       warn: false,
     };
@@ -483,7 +483,8 @@ export function checkDbSchemaCurrent(probe: DbProbe): CheckOutcome {
           "for Conflict errors, which cause the same silence for a different " +
           "reason. ONLY if inbound is confirmed dead, and while the poller " +
           "is stopped, reset the cursor with\n" +
-          "  sqlite3 <state-dir>/claude-code-telegrammer.db \"DELETE FROM meta WHERE key='update_offset'\"\n" +
+          "  psql \"$SCITEX_STORE_DSN\" -c \"DELETE FROM <schema>.meta WHERE key='update_offset'\"\n" +
+          "  (the schema is the one named in this report's store section)\n" +
           "and expect it to re-deliver up to 24h of Telegram's backlog (you " +
           "will see already-read messages arrive again).",
       },

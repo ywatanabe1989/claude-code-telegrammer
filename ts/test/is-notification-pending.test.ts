@@ -13,69 +13,67 @@
  */
 
 import { describe, test, expect, beforeAll } from "bun:test";
-import { Database } from "bun:sqlite";
-import { initStore, DB_PATH } from "../lib/store.js";
+import { initStore } from "../lib/store.js";
 import { isNotificationPending } from "../lib/notify-relay.js";
+import { insertRow, query } from "./helpers/store-access.js";
 
-beforeAll(() => {
-  initStore();
+beforeAll(async () => {
+  await initStore();
 });
 
 describe("isNotificationPending", () => {
-  test("a row whose pending_notification is set returns true", () => {
-    const db = new Database(DB_PATH);
+  test("a row whose pending_notification is set returns true", async () => {
     let rowId: number | undefined;
     try {
-      const res = db.prepare(
-        "INSERT INTO messages (direction, chat_id, message_id, user_id, username, text, telegram_ts, pending_notification) " +
-          "VALUES ('inbound', 'np-set', 'np-1', '42', 'op', 'pending-msg', '2026-01-01T00:00:00Z', ?)",
-      ).run(JSON.stringify({ content: "hello", meta: {} }));
-      rowId = Number(res.lastInsertRowid);
+      rowId = await insertRow(
+        "INSERT INTO ${SCHEMA}.messages (direction, chat_id, message_id," +
+          " user_id, username, text, telegram_ts, pending_notification)" +
+          " VALUES ('inbound', 'np-set', 'np-1', '42', 'op', 'pending-msg'," +
+          " '2026-01-01T00:00:00Z', $1) RETURNING id",
+        [JSON.stringify({ content: "hello", meta: {} })],
+      );
 
-      expect(isNotificationPending(rowId)).toBe(true);
+      expect(await isNotificationPending(rowId)).toBe(true);
     } finally {
-      // Every test file shares one process and one database, so a row left
+      // Every test file shares one process and one namespace, so a row left
       // here is a row the next file sees. This one is pending on purpose,
       // which makes it exactly the kind another file's relay would pick up.
-      try {
-        if (rowId !== undefined) {
-          db.prepare("DELETE FROM messages WHERE id = ?").run(rowId);
-        }
-      } finally {
-        db.close();
+      if (rowId !== undefined) {
+        await query("DELETE FROM ${SCHEMA}.messages WHERE id = $1", [rowId]);
       }
     }
   });
 
-  test("a row whose pending_notification is NULL returns false", () => {
-    const db = new Database(DB_PATH);
+  test("a row whose pending_notification is NULL returns false", async () => {
     let rowId: number | undefined;
     try {
-      const res = db.prepare(
-        "INSERT INTO messages (direction, chat_id, message_id, user_id, username, text, telegram_ts, pending_notification) " +
-          "VALUES ('inbound', 'np-null', 'np-2', '42', 'op', 'cleared-msg', '2026-01-01T00:00:01Z', NULL)",
-      ).run();
-      rowId = Number(res.lastInsertRowid);
+      rowId = await insertRow(
+        "INSERT INTO ${SCHEMA}.messages (direction, chat_id, message_id," +
+          " user_id, username, text, telegram_ts, pending_notification)" +
+          " VALUES ('inbound', 'np-null', 'np-2', '42', 'op', 'cleared-msg'," +
+          " '2026-01-01T00:00:01Z', NULL) RETURNING id",
+      );
 
-      expect(isNotificationPending(rowId)).toBe(false);
+      expect(await isNotificationPending(rowId)).toBe(false);
     } finally {
-      try {
-        if (rowId !== undefined) {
-          db.prepare("DELETE FROM messages WHERE id = ?").run(rowId);
-        }
-      } finally {
-        db.close();
+      if (rowId !== undefined) {
+        await query("DELETE FROM ${SCHEMA}.messages WHERE id = $1", [rowId]);
       }
     }
   });
 
-  test("an unopenable / missing database returns false and does NOT throw", () => {
-    // Use the injectable dbPath seam: pass a path inside a directory that
-    // does not exist, so bun:sqlite throws "unable to open database".
-    // The shared DB is never touched.
-    const impossiblePath = "/nonexistent/path/no-such-dir-at-all/messages.db";
+  test("an unreadable store returns false and does NOT throw", async () => {
+    // Use the injectable schema seam: point at a namespace that does not
+    // exist, so the query errors the way an unreachable or misconfigured
+    // store would. The shared namespace is never touched.
+    const missing = "cct_test_no_such_namespace_at_all";
 
-    expect(() => isNotificationPending(999, impossiblePath)).not.toThrow();
-    expect(isNotificationPending(999, impossiblePath)).toBe(false);
+    expect(await isNotificationPending(999, missing)).toBe(false);
+  });
+
+  test("a row id that does not exist returns false", async () => {
+    // Distinct from the error case above and worth its own line: "no such
+    // row" must be a plain false, not an exception and not a true.
+    expect(await isNotificationPending(2_000_000_000)).toBe(false);
   });
 });

@@ -74,6 +74,27 @@ jobs:
 
   test-ts:
     runs-on: ubuntu-latest
+
+    # The store is REQUIRED, not optional: lib/store.ts refuses to start
+    # without a connection string, so these tests fail rather than skip when no
+    # server is present. Mirrors the same leg in test.yml — a release that
+    # published without the store-backed tests having run would be shipping
+    # untested code with a green tick.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cct
+          POSTGRES_PASSWORD: cct
+          POSTGRES_DB: cct
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cct"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Resolve version
         id: ver
@@ -93,6 +114,10 @@ jobs:
         run: bun install
         working-directory: ts
       - name: Run TypeScript tests
+        # Throwaway credential for the service container this job just created;
+        # it lives and dies with the job.
+        env:
+          SCITEX_STORE_DSN: postgresql://cct:cct@127.0.0.1:5432/cct
         run: bun test
         working-directory: ts
 

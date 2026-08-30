@@ -53,7 +53,8 @@ MCP Server
    * - ``CLAUDE_CODE_TELEGRAMMER_AGENT_STATE_DIR``
      - No
      - ``~/.claude-code-telegrammer``
-     - Directory for SQLite DB, access.json, and lock file.
+     - Directory for access.json, the lock file, and downloaded
+       attachments. Messages live in PostgreSQL (``SCITEX_STORE_DSN``).
    * - ``CLAUDE_CODE_TELEGRAMMER_ALLOWED_USERS``
      - No
      - --

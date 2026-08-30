@@ -44,13 +44,13 @@ function fakeMcp() {
   };
 }
 
-beforeAll(() => {
-  initStore();
+beforeAll(async () => {
+  await initStore();
 });
 
 describe("savePendingNotification + relayPendingNotificationsOnce: real store round trip", () => {
   test("a saved pending row is relayed via mcp.notification, then cleared so it is not delivered twice", async () => {
-    const rowId = saveInbound({
+    const rowId = await saveInbound({
       chat_id: CHAT,
       message_id: `msg-${Date.now()}`,
       user_id: "1",
@@ -69,7 +69,7 @@ describe("savePendingNotification + relayPendingNotificationsOnce: real store ro
       content: "hello from the relay round-trip test",
       meta: { chat_id: CHAT, source: "cct" },
     };
-    savePendingNotification(rowId!, payload);
+    await savePendingNotification(rowId!, payload);
 
     const { mcp, calls } = fakeMcp();
     const delivered = await relayPendingNotificationsOnce({ mcp });

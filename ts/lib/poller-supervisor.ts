@@ -20,7 +20,7 @@
  * testable without ever forking a real process — the same injectable-seam
  * pattern poller-batch.ts / poll-watchdog.ts already use for their own
  * network/timer/notification seams. The default spawn primitive is
- * Bun.spawn (this codebase is Bun-first throughout — bun:sqlite,
+ * Bun.spawn (this codebase is Bun-first throughout — Bun.SQL,
  * Bun.CryptoHasher, Bun.write — and has zero prior child_process usage to
  * follow instead), invoked via process.execPath (the actual bun binary
  * currently running us, resolved the same way the Python CLI wrapper's

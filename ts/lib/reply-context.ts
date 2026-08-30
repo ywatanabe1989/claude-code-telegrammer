@@ -133,6 +133,31 @@ function senderLabel(from: any): string | undefined {
 }
 
 /**
+ * Which message is this one replying TO, if any?
+ *
+ * Split out of {@link parseReplyContext} so a caller can resolve the stored
+ * row for that id BEFORE calling it. The store is now reached over the
+ * network, so a lookup cannot happen inside a synchronous pure function — and
+ * keeping parseReplyContext pure and synchronous is worth more than the
+ * convenience of an inline callback: it is the piece carrying all the
+ * interesting branching, and every test that pins its behaviour drives it with
+ * a plain value.
+ *
+ * `external_reply` is included deliberately: a reply to a message in ANOTHER
+ * chat ships provenance but no body, and it is still a reply.
+ */
+export function replyTargetMessageId(msg: any): string | null {
+  if (!msg || typeof msg !== "object") return null;
+  const target = msg.reply_to_message;
+  if (target?.message_id !== undefined) return String(target.message_id);
+  const external = msg.external_reply;
+  if (external?.origin?.message_id !== undefined) {
+    return String(external.origin.message_id);
+  }
+  return null;
+}
+
+/**
  * Extract reply context from a raw Telegram Message.
  *
  * Returns null when the message is NOT a reply — the "no reply" case, which
@@ -157,7 +182,7 @@ function senderLabel(from: any): string | undefined {
  *
  * `lookup` is injected rather than imported so this module stays free of
  * store.ts (and so the store-backed path can be exercised against a real
- * SQLite store instead of a stub).
+ * store instead of a stub).
  */
 export function parseReplyContext(
   msg: any,
@@ -166,16 +191,8 @@ export function parseReplyContext(
   if (!msg || typeof msg !== "object") return null;
 
   const target = msg.reply_to_message;
-  const external = msg.external_reply;
 
-  let messageId: string | undefined;
-  if (target?.message_id !== undefined) {
-    messageId = String(target.message_id);
-  } else if (external?.origin?.message_id !== undefined) {
-    // Reply to a message in ANOTHER chat: Telegram ships provenance but no
-    // body. Still a reply — surface it and let resolution say what we know.
-    messageId = String(external.origin.message_id);
-  }
+  const messageId = replyTargetMessageId(msg) ?? undefined;
   if (!messageId) return null;
 
   const from = senderLabel(target?.from);

@@ -37,7 +37,11 @@ import {
   buildInboundText,
   attachmentDescriptor,
 } from "./forward.js";
-import { parseReplyContext, replyDescriptor } from "./reply-context.js";
+import {
+  parseReplyContext,
+  replyDescriptor,
+  replyTargetMessageId,
+} from "./reply-context.js";
 import { sendLoudFailReply } from "./loudfail.js";
 import { recordWakeFailure, recordWakeSuccess } from "./wake-health.js";
 import { neutralizeChannelEnvelope } from "./sanitize.js";
@@ -179,12 +183,12 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
     ? String(msg.reply_to_message.message_id)
     : undefined;
 
-  // Persist to SQLite before acking. A THROW here is a real persist
+  // Persist to the store before acking. A THROW here is a real persist
   // failure — return "persistError" so the poller does NOT advance the
   // getUpdates offset past this update (Telegram will redeliver it).
   let rowId: number | null = null;
   try {
-    rowId = saveInbound({
+    rowId = await saveInbound({
       chat_id: chatId,
       message_id: String(msg.message_id),
       user_id: userId,
@@ -221,7 +225,7 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
   for (const { kind, obj } of attachments) {
     if (obj) {
       try {
-        insertAttachment(rowId, {
+        await insertAttachment(rowId, {
           kind,
           file_id: obj.file_id,
           file_unique_id: obj.file_unique_id,
@@ -348,15 +352,23 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
   // The store lookup is the last resort inside parseReplyContext — used only
   // when Telegram did not inline the target's body — and it must never be
   // able to break delivery, hence the swallow-and-log.
-  const replyCtx = parseReplyContext(msg, (targetId) => {
+  //
+  // The lookup is resolved BEFORE parseReplyContext runs, because that
+  // function is pure and synchronous and must stay that way — it is the piece
+  // with the interesting branching, and the tests that pin its behaviour
+  // exercise it with a plain function. So the one row it might ask for is
+  // fetched here and handed over as an already-resolved value.
+  const replyTargetId = replyTargetMessageId(msg);
+  let replyTargetText: string | null = null;
+  if (replyTargetId !== null) {
     try {
-      const row = getMessageByMessageId(chatId, targetId);
-      return typeof row?.text === "string" ? row.text : null;
+      const row = await getMessageByMessageId(chatId, replyTargetId);
+      replyTargetText = typeof row?.text === "string" ? row.text : null;
     } catch (err) {
       log("poller", "reply-target lookup failed", { error: String(err) });
-      return null;
     }
-  });
+  }
+  const replyCtx = parseReplyContext(msg, () => replyTargetText);
   if (replyCtx) {
     // Also covers the external_reply case, where the id comes from the
     // reply's ORIGIN rather than from an inlined reply_to_message and so was
@@ -403,7 +415,7 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
     // still sees inbound messages live — with a short relay delay instead
     // of an immediate push, the necessary cost of crossing a process
     // boundary via disk instead of a function call.
-    savePendingNotification(rowId, {
+    await savePendingNotification(rowId, {
       content: neutralizeChannelEnvelope(deliveredText),
       meta,
     });
@@ -446,12 +458,12 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
   // both "is the bridge alive?" (yes, 👀 fired) and "why didn't the
   // agent reply?" (the categorised reason).
   if (wakeEnabled()) {
-    void wakeTurn(deliveredText, meta).then((result) => {
+    void wakeTurn(deliveredText, meta).then(async (result) => {
       if (result.ok) {
-        recordWakeSuccess();
+        await recordWakeSuccess();
         void markDone(chatId, String(msg.message_id));
       } else {
-        recordWakeFailure(result.category, result.reason);
+        await recordWakeFailure(result.category, result.reason);
 
         // FALLBACK (incident-cct-operator-messages-not-arriving-20260714).
         //
@@ -474,7 +486,7 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
         // also queue a notification or the operator gets the message twice
         // (the "sent twice" he reported 2026-06-18, which is exactly why the
         // notification above is gated on !wakeEnabled()).
-        savePendingNotification(rowId, {
+        await savePendingNotification(rowId, {
           content: neutralizeChannelEnvelope(deliveredText),
           meta,
         });
@@ -482,10 +494,11 @@ export async function handleUpdate(update: any): Promise<UpdateStatus> {
         // Let the independent notify-relay path have a chance to deliver
         // before we alarm the operator — it almost always wins.
         setTimeout(() => {
-          if (isNotificationPending(rowId)) {
+          void isNotificationPending(rowId).then((stillPending) => {
+            if (!stillPending) return;
             void markFailed(chatId, String(msg.message_id));
             void sendLoudFailReply(chatId, Number(msg.message_id), result);
-          }
+          });
         }, 15000);
       }
     });

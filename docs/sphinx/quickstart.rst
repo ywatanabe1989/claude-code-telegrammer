@@ -145,7 +145,7 @@ Once the server is running, Claude Code has access to 10 tools:
    * - ``edit_message``
      - Edit a previously sent bot message.
    * - ``get_history``
-     - Retrieve message history for a chat from local SQLite.
+     - Retrieve message history for a chat from the message store.
    * - ``get_unread``
      - List unread inbound messages, optionally filtered by ``chat_id``.
    * - ``mark_read``

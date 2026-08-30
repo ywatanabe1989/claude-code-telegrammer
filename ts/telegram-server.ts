@@ -10,7 +10,7 @@
  *   - Telegram Bot API polling via getUpdates (long polling)
  *   - Inbound message delivery as channel notifications
  *   - reply/react/edit_message/get_history/get_unread/mark_read tools
- *   - SQLite message store with dedup, read/replied tracking
+ *   - PostgreSQL message store with dedup, read/replied tracking
  *   - Allowlist-based access control (access.json + env var)
  *   - Single-instance enforcement via PID lock file
  *   - "Newest wins" per-bot-token takeover (lib/takeover.ts) — a fresh
@@ -369,7 +369,7 @@ migrateLegacyStateDir();
 ensureCctAlias();
 
 acquireLock();
-initStore();
+await initStore();
 
 // ── Access-gating posture (loud at STARTUP) ─────────────────────────────────
 //

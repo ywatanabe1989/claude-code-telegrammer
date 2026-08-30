@@ -325,7 +325,7 @@ export function registerTools(mcp: Server): void {
           assertAllowedChat(chatId);
           const msgId = await sendMessage(chatId, text, replyTo);
           try {
-            saveOutbound(chatId, text, String(msgId), rowId, {
+            await saveOutbound(chatId, text, String(msgId), rowId, {
               host: HOST_NAME,
               project: PROJECT,
               agent_id: AGENT_ID,
@@ -333,7 +333,7 @@ export function registerTools(mcp: Server): void {
             });
             // Mark the inbound as read if requested
             if (shouldMarkRead && rowId) {
-              markRead(rowId);
+              await markRead(rowId);
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -377,7 +377,7 @@ export function registerTools(mcp: Server): void {
           const messageIds = args.message_ids as number[] | undefined;
           if (chatId) {
             assertAllowedChat(chatId);
-            markAllRead(chatId);
+            await markAllRead(chatId);
             return {
               content: [
                 {
@@ -389,7 +389,7 @@ export function registerTools(mcp: Server): void {
           }
           if (messageIds && messageIds.length > 0) {
             for (const id of messageIds) {
-              markRead(id);
+              await markRead(id);
             }
             return {
               content: [

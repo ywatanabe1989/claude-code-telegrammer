@@ -1,47 +1,33 @@
 /**
- * Regression test: store.ts::ensureColumn's migration TOCTOU
- * (adversarial-review finding #1, follow-up to the poller/MCP-server
- * decoupling PR).
+ * store.ts::ensureColumn under a genuine two-process race.
  *
- * ensureColumn (the ALTER TABLE ADD COLUMN forward_json migration, run
- * unconditionally by every initStore() call since the column is
- * deliberately kept OUT of CREATE TABLE — see store.ts) reads
- * PRAGMA table_info then conditionally ALTERs: a classic check-then-act
- * race. Two processes racing it on a genuinely FRESH (not yet migrated)
- * DB — the realistic case is an MCP server and its freshly-spawned
- * standalone poller both calling initStore() around the same moment on a
- * brand-new state dir — the loser hits `SQLiteError: duplicate column
- * name`, a LOGICAL error, not a lock error, so busy_timeout does nothing
- * for it. Because this throw happens SYNCHRONOUSLY inside initStore() at
- * the poller's top level (no try/catch there), and JS cannot resume
- * top-level execution after an uncaught exception, startPolling() would
- * never run — the poller goes silently inert (not even a crash — the
- * global uncaughtException handler only logs) before ever polling, and
- * nothing notices (ensurePollerRunning's fire-and-forget spawn never
- * checks back).
+ * WHAT THIS USED TO CATCH. The previous engine had no `ADD COLUMN IF NOT
+ * EXISTS`, so ensureColumn had to read the table's columns and then ALTER —
+ * a check-then-act whose window two concurrently-starting processes really
+ * did hit. The loser got a FATAL "duplicate column name", and because that
+ * throw escaped initStore() at top level, the poller went silently inert:
+ * process alive, nothing polling, nothing to notice.
  *
- * REPRODUCTION NOTE: racing two processes through the FULL initStore()
- * sequence (WAL-mode switch, several CREATE TABLE/INDEX statements, the
- * schema_version INSERT OR IGNORE, THEN ensureColumn) empirically almost
- * never collides — those preceding statements' own lock contention +
- * busy_timeout retries tend to desynchronize the two processes well
- * before either reaches the actual 2-statement race window, verified
- * empirically at 0/20 reproductions. Isolating the race to JUST the
- * ensureColumn call against an already-existing (but not yet migrated)
- * db file — removing that preceding noise — reproduces the exact
- * `duplicate column name` error reliably (~45% per single attempt,
- * verified empirically). This test races ensureColumn directly (via
- * fixtures/ensure-column-race-fixture.ts) in a loop of independent
- * attempts against fresh DBs, so the overall test has a
- * 1-0.55^10 ≈ 99.75% chance of exercising the race at least once even
- * though any SINGLE attempt is probabilistic.
+ * WHAT IS TRUE NOW. The statement is a single atomic `ADD COLUMN IF NOT
+ * EXISTS` that holds the table lock for its whole duration, so the loser
+ * observes the column present and does nothing. The old window is closed by
+ * construction rather than by a catch.
+ *
+ * WHY THIS FILE SURVIVES ANYWAY. The property worth pinning was never "that
+ * specific error string does not appear" — it was BOTH PROCESSES SURVIVE AND
+ * THE COLUMN EXISTS ONCE. That is still exactly what a startup race has to
+ * produce, it is still what the poller's liveness depends on, and it is still
+ * only provable with two real processes. Concurrent DDL can also lose a
+ * catalog race ("tuple concurrently updated"), which ensureColumn tolerates
+ * for the same reason the old code tolerated the duplicate-column error, so
+ * the failure mode has moved rather than vanished.
+ *
+ * No mocks: two real spawned processes against one real server.
  */
 
-import { describe, test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
+import { describe, test, expect, afterAll } from "bun:test";
 import { join } from "path";
-import { Database } from "bun:sqlite";
+import { getSql, quoteSchema } from "../lib/pg.js";
 
 const FIXTURE = join(
   import.meta.dir,
@@ -50,54 +36,75 @@ const FIXTURE = join(
 );
 const ATTEMPTS = 10;
 
+const created: string[] = [];
+
+afterAll(async () => {
+  for (const schema of created) {
+    await getSql().unsafe(`DROP SCHEMA IF EXISTS ${quoteSchema(schema)} CASCADE`);
+  }
+});
+
 interface AttemptResult {
   exit1: number;
   exit2: number;
   stderr1: string;
   stderr2: string;
+  forwardJsonColumns: number;
 }
 
-async function raceOnce(): Promise<AttemptResult> {
-  const dir = mkdtempSync(join(tmpdir(), "cct-ensurecol-"));
-  try {
-    const dbPath = join(dir, "race-test.db");
-    // Minimal pre-existing "messages" table WITHOUT forward_json — the
-    // exact precondition ensureColumn's migration exists to handle. Only
-    // the column presence matters to ensureColumn; the rest of the real
-    // schema is irrelevant to this specific race.
-    const setupDb = new Database(dbPath, { create: true });
-    setupDb.exec(
-      "PRAGMA journal_mode = WAL; CREATE TABLE messages (id INTEGER PRIMARY KEY);",
+async function raceOnce(index: number): Promise<AttemptResult> {
+  const sql = getSql();
+  // A fresh namespace per attempt, so every race starts from the exact
+  // precondition the migration exists to handle: a `messages` table that
+  // exists and does NOT yet have forward_json.
+  const schema = `cct_test_${Date.now()}_race_${process.pid}_${index}`;
+  created.push(schema);
+  const s = quoteSchema(schema);
+  await sql
+    .unsafe(
+      `CREATE SCHEMA ${s};
+       CREATE TABLE ${s}.messages (id BIGSERIAL PRIMARY KEY);`,
+    )
+    .simple();
+
+  const startAt = Date.now() + 100;
+  const spawnWorker = (workerId: string) =>
+    Bun.spawn(
+      [process.execPath, "run", FIXTURE, workerId, schema, String(startAt)],
+      { stdout: "pipe", stderr: "pipe" },
     );
-    setupDb.close();
 
-    const startAt = Date.now() + 100;
-    const spawnWorker = (workerId: string) =>
-      Bun.spawn(
-        [process.execPath, "run", FIXTURE, workerId, dbPath, String(startAt)],
-        { stdout: "pipe", stderr: "pipe" },
-      );
+  const w1 = spawnWorker("1");
+  const w2 = spawnWorker("2");
 
-    const w1 = spawnWorker("1");
-    const w2 = spawnWorker("2");
+  const [exit1, exit2, stderr1, stderr2] = await Promise.all([
+    w1.exited,
+    w2.exited,
+    new Response(w1.stderr as ReadableStream).text(),
+    new Response(w2.stderr as ReadableStream).text(),
+  ]);
 
-    const [exit1, exit2, stderr1, stderr2] = await Promise.all([
-      w1.exited,
-      w2.exited,
-      new Response(w1.stderr as ReadableStream).text(),
-      new Response(w2.stderr as ReadableStream).text(),
-    ]);
-    return { exit1, exit2, stderr1, stderr2 };
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const cols = (await sql.unsafe(
+    "SELECT column_name FROM information_schema.columns" +
+      " WHERE table_schema = $1 AND table_name = 'messages'" +
+      " AND column_name = 'forward_json'",
+    [schema],
+  )) as unknown[];
+
+  return {
+    exit1,
+    exit2,
+    stderr1,
+    stderr2,
+    forwardJsonColumns: cols.length,
+  };
 }
 
 describe("store.ts::ensureColumn — multi-process migration race", () => {
-  test(`${ATTEMPTS} independent two-process race attempts against fresh DBs never surface duplicate-column-name`, async () => {
+  test(`${ATTEMPTS} independent two-process race attempts against fresh namespaces both survive and add the column exactly once`, async () => {
     const results: AttemptResult[] = [];
     for (let i = 0; i < ATTEMPTS; i++) {
-      results.push(await raceOnce());
+      results.push(await raceOnce(i));
     }
 
     const failures = results
@@ -114,5 +121,11 @@ describe("store.ts::ensureColumn — multi-process migration race", () => {
           )
           .join("\n"),
     ).toEqual([]);
-  }, 30_000);
+
+    // The other half of the property: surviving is not enough if the racing
+    // pair left the schema wrong.
+    expect(results.map((r) => r.forwardJsonColumns)).toEqual(
+      Array(ATTEMPTS).fill(1),
+    );
+  }, 60_000);
 });

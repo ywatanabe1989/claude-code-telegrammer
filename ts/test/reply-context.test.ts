@@ -34,6 +34,7 @@ import { writeFileSync, rmSync, mkdirSync } from "fs";
 import realReply from "./fixtures/real-reply-8303.json";
 import {
   parseReplyContext,
+  replyTargetMessageId,
   replyDescriptor,
   REPLY_EXCERPT_MAX,
 } from "../lib/reply-context.js";
@@ -64,8 +65,8 @@ function captureTurnCalls(status = 200): TurnCall[] {
   return calls;
 }
 
-beforeAll(() => {
-  initStore();
+beforeAll(async () => {
+  await initStore();
   mkdirSync(STATE_DIR, { recursive: true });
   writeFileSync(ACCESS_FILE, JSON.stringify({ allowFrom: [USER_ID] }));
   _resetCache();
@@ -245,34 +246,38 @@ describe("unresolvable reply targets are SAID, not omitted", () => {
 });
 
 describe("the local-DB fallback resolves targets Telegram did not inline", () => {
-  test("a bot message recovered from the REAL store, by message_id", () => {
-    // A real outbound row in a real SQLite store — the same table and the
-    // same writer the bridge uses in production, not a stub.
+  test("a bot message recovered from the REAL store, by message_id", async () => {
+    // A real outbound row in the REAL store — the same table and the same
+    // writer the bridge uses in production, not a stub.
     const botText = "which option do you want, A or B?";
-    saveOutbound(CHAT_ID, botText, "8293-store");
+    await saveOutbound(CHAT_ID, botText, "8293-store");
 
-    const stored = getMessageByMessageId(CHAT_ID, "8293-store");
+    const stored = await getMessageByMessageId(CHAT_ID, "8293-store");
     expect(stored).not.toBeNull();
     expect(stored!.direction).toBe("outbound");
 
+    // parseReplyContext is pure and SYNCHRONOUS by design — the store now
+    // lives across a network, so the lookup is resolved first and the value
+    // is handed over, exactly as lib/handle-update.ts does it in production.
+    const targetId = replyTargetMessageId({
+      reply_to_message: { message_id: "8293-store" },
+    })!;
+    const targetRow = await getMessageByMessageId(CHAT_ID, targetId);
     const ctx = parseReplyContext(
       {
         text: "A",
         chat: { id: Number(CHAT_ID), type: "private" },
         reply_to_message: { message_id: "8293-store" },
       },
-      (id) => {
-        const row = getMessageByMessageId(CHAT_ID, id);
-        return typeof row?.text === "string" ? row.text : null;
-      },
+      () => (typeof targetRow?.text === "string" ? targetRow.text : null),
     )!;
 
     expect(ctx.resolution).toBe("store");
     expect(ctx.excerpt).toBe(botText);
   });
 
-  test("an absent message_id really returns null (the UNRESOLVED path is reachable)", () => {
-    expect(getMessageByMessageId(CHAT_ID, "no-such-message")).toBeNull();
+  test("an absent message_id really returns null (the UNRESOLVED path is reachable)", async () => {
+    expect(await getMessageByMessageId(CHAT_ID, "no-such-message")).toBeNull();
   });
 });
 

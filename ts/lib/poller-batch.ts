@@ -181,8 +181,8 @@ export async function processBatch(
           `FATAL: update ${update.update_id} failed to persist ` +
             `${persistFail.count}× consecutively — SKIPPING it to unwedge ` +
             `the poller. This message is PERMANENTLY LOST, but the loss is ` +
-            `announced here, never silent. Investigate the SQLite store ` +
-            `(disk full / corruption / locked DB).`,
+            `announced here, never silent. Investigate the message ` +
+            `store (server unreachable, out of disk, or refusing writes).`,
         );
         offset = update.update_id + 1;
         persistFail = null;

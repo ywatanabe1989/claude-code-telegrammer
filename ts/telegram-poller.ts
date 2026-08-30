@@ -28,7 +28,7 @@
  * "newest wins" poller takeover.
  *
  * Bootstrap mirrors telegram-server.ts's pre-poller sequence exactly
- * (migrateLegacyStateDir → ensureCctAlias → initStore — deliberately
+ * (migrateLegacyStateDir -> ensureCctAlias -> initStore — deliberately
  * skipping acquireLock()/releaseLock(), which guard the MCP server's OWN
  * single-instance lock at LOCK_FILE; this poller's concurrency safety is
  * fully owned by lib/takeover.ts's independent per-token pidfile protocol,
@@ -117,7 +117,7 @@ process.on("uncaughtException", (err) =>
 // ── Bootstrap (mirrors telegram-server.ts's pre-poller sequence) ──────────
 migrateLegacyStateDir();
 ensureCctAlias();
-initStore();
+await initStore();
 
 // ── Shutdown ────────────────────────────────────────────────────────────
 //

@@ -17,7 +17,7 @@ delegate heavy work to background subagents, so the relay never blocks.
 | `reply` | Reply on Telegram. Supports threading (`reply_to`), auto-marks the inbound as read; inbound reply-to references are tracked and forwarded. |
 | `react` | Add an emoji reaction. Inbound reactions (`message_reaction`) are also delivered as channel notifications. |
 | `edit_message` | Edit a message the bot previously sent. |
-| `get_history` | Retrieve message history for a chat from local SQLite. Rows with stored attachments include an `attachments` array (kind, file_id, local_path, …). |
+| `get_history` | Retrieve message history for a chat from the message store. Rows with stored attachments include an `attachments` array (kind, file_id, local_path, …). |
 | `get_unread` | List unread inbound messages, optionally filtered by `chat_id`. Includes the same `attachments` array. |
 | `mark_read` | Mark messages read by `chat_id` or `message_ids`. |
 | `download_attachment` | Resolve a Telegram file to a local path by `file_id` **or** `row_id`. Returns the existing path without re-downloading when the auto-download already completed. |

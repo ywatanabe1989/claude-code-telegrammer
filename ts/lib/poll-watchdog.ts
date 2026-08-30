@@ -66,10 +66,12 @@ let lastSuccessfulPollMs = 0;
  *
  * @param now Injectable epoch-ms clock (defaults to Date.now()).
  */
-export function recordSuccessfulPoll(now: number = Date.now()): void {
+export async function recordSuccessfulPoll(
+  now: number = Date.now(),
+): Promise<void> {
   lastSuccessfulPollMs = now;
   try {
-    saveLastPollTs(now);
+    await saveLastPollTs(now);
   } catch (err) {
     log("poller", "failed to persist last-poll heartbeat", {
       error: String(err),

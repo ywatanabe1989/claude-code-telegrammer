@@ -5,49 +5,87 @@
  * lib/poller-batch.ts / lib/tools-messages.ts).
  */
 
-import type { Database } from "bun:sqlite";
+import { getSql, quoteSchema } from "./pg.js";
 import { log } from "./log.js";
+
+/**
+ * Is this the "someone else created it at the same instant" error?
+ *
+ * `IF NOT EXISTS` reads like it settles concurrency and does not: PostgreSQL
+ * documents it as a check-then-create with a race, and the loser gets a
+ * catalog unique-violation rather than a quiet no-op. MEASURED, not
+ * theorised — two real processes calling initStore() against the same fresh
+ * namespace, and the loser died with `duplicate key value violates unique
+ * constraint "pg_namespace_nspname_index"`.
+ *
+ * That pairing matters here more than anywhere else in this codebase. The MCP
+ * server and its poller start TOGETHER and both call initStore(), so first
+ * boot is exactly when they collide — and a throw out of initStore() lands at
+ * top level, where JavaScript cannot resume, so the poller would go SILENTLY
+ * INERT: process alive, pidfile fresh, nothing ingesting. That is the
+ * 2026-07 incident this codebase already paid for once under the previous
+ * engine, arriving through a different door.
+ *
+ * Matched on SQLSTATE, not on prose. The old engine's equivalent guard had to
+ * match an error MESSAGE because it reported no distinguishing code, and its
+ * comment said plainly that a prose match is normally the wrong thing to do.
+ * Here there are real codes, so the guard uses them.
+ */
+export function isConcurrentDdlRace(err: unknown): boolean {
+  const code = (err as { errno?: string; code?: string } | null)?.errno;
+  // 23505 unique_violation (a catalog row), 42P07 duplicate_table,
+  // 42710 duplicate_object, 42P06 duplicate_schema.
+  if (code && ["23505", "42P07", "42710", "42P06"].includes(code)) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /already exists|duplicate key|tuple concurrently updated/i.test(msg);
+}
+
+/** Column names are code-supplied, never user input — enforce that. */
+function quoteIdent(name: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`refusing to build DDL with the identifier "${name}"`);
+  }
+  return `"${name}"`;
+}
 
 /**
  * Idempotent ALTER TABLE ADD COLUMN.
  *
- * SQLite's CREATE TABLE IF NOT EXISTS does NOT update existing tables when
- * columns are added to the schema, so store.ts::initStore() calls this on
- * every startup to bring older databases forward without dropping data.
+ * CREATE TABLE IF NOT EXISTS does NOT update existing tables when columns are
+ * added to the schema, so store.ts::initStore() calls this on every startup to
+ * bring older namespaces forward without dropping data.
  *
- * Also tolerates the multi-process TOCTOU race between the table_info read
- * and the ALTER below (adversarial-review finding #1, follow-up to the
- * poller/MCP-server decoupling PR): two fresh processes migrating the SAME
- * brand-new db concurrently (the realistic case — an MCP server and its
- * freshly-spawned standalone poller both calling initStore() around the
- * same moment) can both observe the column absent, then both attempt the
- * ALTER; the loser hits `SQLiteError: duplicate column name` — a LOGICAL
- * error, not a lock error, so store.ts's busy_timeout fix does nothing for
- * it. That throw used to propagate out of initStore() synchronously; since
- * JS cannot resume top-level execution after an uncaught exception, a
- * poller process hitting this would go silently inert before ever calling
- * startPolling() (see ts/telegram-poller.ts) — nothing would notice.
- * "duplicate column name" is therefore treated as a benign, expected
- * outcome of LOSING this race (the column exists either way — the other
- * process's migration already did the job), not a fatal error. Reproduced
- * empirically and regression-guarded by
- * ts/test/store-migration-race.test.ts.
+ * WHAT THE ENGINE MOVE RETIRED, AND WHAT IT DID NOT. The previous engine had
+ * no `IF NOT EXISTS` here, so this function had to read the table's columns
+ * and then ALTER — a check-then-act whose window two concurrently-starting
+ * processes (an MCP server and its freshly-spawned poller both calling
+ * initStore()) really did hit, leaving the loser with a fatal "duplicate
+ * column name" that killed the poller's top-level bootstrap silently. That
+ * race is gone: the statement below is a single atomic one, and it takes the
+ * table lock for its whole duration, so the loser observes the column already
+ * present and does nothing.
+ *
+ * The TOLERANT CATCH stays anyway. Concurrent DDL on one table can still lose
+ * a catalog race ("tuple concurrently updated") under contention, and the
+ * consequence of treating that as fatal is unchanged from the incident this
+ * guard was written for: a poller that goes inert with nothing to notice.
+ * Losing this race means the column exists either way, so it is an expected
+ * outcome, not an error — and it is LOGGED rather than swallowed.
  */
-export function ensureColumn(
-  database: Database,
+export async function ensureColumn(
+  schema: string,
   table: string,
   column: string,
   decl: string,
-): void {
-  const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-    name: string;
-  }>;
-  if (cols.some((c) => c.name === column)) return;
+): Promise<void> {
+  const target = `${quoteSchema(schema)}.${quoteIdent(table)}`;
   try {
-    database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+    await getSql().unsafe(
+      `ALTER TABLE ${target} ADD COLUMN IF NOT EXISTS ${quoteIdent(column)} ${decl}`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (!msg.includes("duplicate column")) throw err;
+    if (!isConcurrentDdlRace(err) && !/duplicate column/i.test(msg)) throw err;
     log(
       "store",
       `ensureColumn: lost the race adding ${table}.${column} — another ` +

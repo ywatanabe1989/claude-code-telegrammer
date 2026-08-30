@@ -13,20 +13,15 @@
  * The first cut of this decoupling PR left this as a documented gap
  * (message durably saved, but not live-pushed). This module closes it.
  *
- * The fix mirrors lib/wake-health.ts's own cross-process pattern: the
- * WRITER (the poller process, via lib/handle-update.ts::savePendingNotification)
- * persists the fully-built notification payload (content + meta) onto the
- * message's own row in the shared SQLite store, using an independent DB
- * handle (same "many handles, one WAL file" pattern as
- * lib/attachments.ts::getDb() / lib/health-adapters.ts::probeDb()) rather
- * than growing lib/store.ts (already at this repo's per-file line cap).
- * The READER (THIS module, running in the MCP-server process, which still
- * holds the live `mcp` object throughout an interactive session) polls for
- * pending rows and calls mcp.notification() itself, then clears the
- * payload once delivered — restoring the ORIGINAL live-push behaviour via
- * a short (default 1s) delay instead of an immediate call, the necessary
- * cost of the payload having to cross a process boundary via disk instead
- * of a function call.
+ * The fix: the WRITER (the poller process, via
+ * lib/handle-update.ts::savePendingNotification) persists the fully-built
+ * notification payload onto the message's own row in the shared store. The
+ * READER (THIS module, running in the MCP-server process, which still holds
+ * the live `mcp` object throughout an interactive session) polls for pending
+ * rows and calls mcp.notification() itself, then clears the payload once
+ * delivered — restoring the ORIGINAL live-push behaviour via a short (default
+ * 1s) delay instead of an immediate call, the necessary cost of the payload
+ * having to cross a process boundary via the store instead of a function call.
  *
  * Only ever populated for !wakeEnabled() deployments (see
  * lib/handle-update.ts) — wake-enabled agents deliver via the already
@@ -34,11 +29,18 @@
  * finds nothing to do for them; started only when !wakeEnabled() in
  * ts/telegram-server.ts to avoid a pointless poll for the common
  * (wake-enabled fleet) case.
+ *
+ * NOTE ON THE ENGINE MOVE: this module used to open its own independent
+ * database handle, each one having to remember its own lock-timeout setting
+ * (a footgun documented in four separate places in this codebase). It now
+ * shares the one pooled connection like everything else, which retires that
+ * whole class of mistake.
  */
 
-import { Database } from "bun:sqlite";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { DB_PATH } from "./store.js";
+import { getSql } from "./pg.js";
+import { storeSchema } from "./store.js";
+import { statements } from "./store-schema.js";
 import { log } from "./log.js";
 
 export interface PendingNotificationPayload {
@@ -56,23 +58,15 @@ export interface PendingNotificationPayload {
  * logged, never thrown — must not crash inbound message handling over a
  * delivery-relay concern.
  */
-export function savePendingNotification(
+export async function savePendingNotification(
   rowId: number,
   payload: PendingNotificationPayload,
-): void {
+): Promise<void> {
   try {
-    const db = new Database(DB_PATH);
-    try {
-      // busy_timeout is per-CONNECTION, not inherited from the file's
-      // WAL-mode schema (adversarial-review finding #6) — every ad hoc
-      // handle in this module sets it explicitly for the same reason.
-      db.exec("PRAGMA busy_timeout = 5000;");
-      db.prepare(
-        "UPDATE messages SET pending_notification = ? WHERE id = ?",
-      ).run(JSON.stringify(payload), rowId);
-    } finally {
-      db.close();
-    }
+    await getSql().unsafe(statements(storeSchema()).setPendingNotification, [
+      JSON.stringify(payload),
+      rowId,
+    ]);
   } catch (err) {
     log("notify-relay", "failed to persist pending notification", {
       row_id: rowId,
@@ -88,28 +82,24 @@ export function savePendingNotification(
  * pending_notification is not null. Returns false on any thrown error so a
  * broken probe never creates a false alarm.
  *
- * @param rowId - The messages.row to check.
- * @param dbPath - The database file to open. Defaults to DB_PATH. Injected
- *   as an optional second parameter so tests can target a non-existent path
- *   (e.g. inside a directory that does not exist) without touching the
- *   shared database used by the whole suite.
+ * @param rowId - The messages row to check.
+ * @param schema - The namespace to read. Defaults to the initialized store's.
+ *   Injected so tests can target a namespace that does not exist without
+ *   touching the one the rest of the suite shares.
  */
-export function isNotificationPending(
+export async function isNotificationPending(
   rowId: number,
-  dbPath: string = DB_PATH,
-): boolean {
-  let db: Database | undefined;
+  schema?: string,
+): Promise<boolean> {
   try {
-    db = new Database(dbPath, { readonly: true });
-    db.exec("PRAGMA busy_timeout = 5000;");
-    const row = db
-      .prepare("SELECT pending_notification FROM messages WHERE id = ?")
-      .get(rowId) as { pending_notification: string | null } | undefined;
+    const rows = await getSql().unsafe(
+      statements(schema ?? storeSchema()).readPendingNotification,
+      [rowId],
+    );
+    const row = rows[0] as { pending_notification: string | null } | undefined;
     return !!row && row.pending_notification !== null;
   } catch {
     return false;
-  } finally {
-    db?.close();
   }
 }
 
@@ -118,41 +108,30 @@ interface PendingRow {
   pending_notification: string;
 }
 
-/** READONLY read of currently-pending rows — never mutates, safe against
- * the live poller's WAL, same precedent as health-adapters.ts::probeDb(). */
-function readPendingRows(): PendingRow[] {
-  const db = new Database(DB_PATH, { readonly: true });
-  try {
-    db.exec("PRAGMA busy_timeout = 5000;");
-    return db
-      .prepare(
-        "SELECT id, pending_notification FROM messages " +
-          "WHERE pending_notification IS NOT NULL ORDER BY id",
-      )
-      .all() as PendingRow[];
-  } finally {
-    db.close();
-  }
+/** Currently-pending rows, oldest first. */
+async function readPendingRows(): Promise<PendingRow[]> {
+  const rows = (await getSql().unsafe(
+    statements(storeSchema()).pendingNotifications,
+    [],
+  )) as Array<{ id: string | number; pending_notification: string }>;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    pending_notification: r.pending_notification,
+  }));
 }
 
-function clearPendingRow(id: number): void {
-  const db = new Database(DB_PATH);
-  try {
-    db.exec("PRAGMA busy_timeout = 5000;");
-    db.prepare(
-      "UPDATE messages SET pending_notification = NULL WHERE id = ?",
-    ).run(id);
-  } finally {
-    db.close();
-  }
+async function clearPendingRow(id: number): Promise<void> {
+  await getSql().unsafe(statements(storeSchema()).clearPendingNotification, [
+    id,
+  ]);
 }
 
 export interface NotifyRelayDeps {
   mcp: Server;
   /** Injectable for tests; defaults to a real readPendingRows() call. */
-  getPending?: () => PendingRow[];
+  getPending?: () => PendingRow[] | Promise<PendingRow[]>;
   /** Injectable for tests; defaults to a real clearPendingRow() call. */
-  clearPending?: (id: number) => void;
+  clearPending?: (id: number) => void | Promise<void>;
   logFn?: typeof log;
 }
 
@@ -172,7 +151,19 @@ export async function relayPendingNotificationsOnce(
   const logFn = deps.logFn ?? log;
 
   let delivered = 0;
-  for (const row of getPending()) {
+  let pending: PendingRow[];
+  try {
+    pending = await getPending();
+  } catch (err) {
+    // The snapshot itself failed (store unreachable). Nothing to relay this
+    // tick; the next one retries. Logged, never thrown — same contract the
+    // per-row branch below already honoured.
+    logFn("notify-relay", "failed to read pending notifications", {
+      error: String(err),
+    });
+    return 0;
+  }
+  for (const row of pending) {
     try {
       const payload = JSON.parse(
         row.pending_notification,
@@ -181,7 +172,7 @@ export async function relayPendingNotificationsOnce(
         method: "notifications/claude/channel",
         params: payload,
       });
-      clearPending(row.id);
+      await clearPending(row.id);
       delivered += 1;
     } catch (err) {
       // Leave the row pending — retried on the next tick. Logged, never

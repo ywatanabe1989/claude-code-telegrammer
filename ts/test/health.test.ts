@@ -105,7 +105,7 @@ describe("shared contract shape", () => {
           writable: false,
           detail: "EACCES",
         },
-        db: { exists: true, error: "SQLITE_CANTOPEN" },
+        db: { exists: true, error: "connection refused" },
       }),
     );
     expect(report.ok).toBe(false);

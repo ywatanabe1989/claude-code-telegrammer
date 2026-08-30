@@ -11,7 +11,7 @@
  *     return rowId === null ? "duplicate" : "ok";
  *
  * so a designated update literally simulates saveInbound THROWING while
- * its neighbours persist real rows against a real SQLite store. No
+ * its neighbours persist real rows against a real store. No
  * network is touched (the wake/receipt paths of the real handleUpdate
  * are deliberately not exercised — this is a pure test of the offset /
  * retry / loud-notification logic).
@@ -87,7 +87,7 @@ function persistingHandler(throwIds: Set<number>) {
         throw new Error("simulated DB failure");
       }
       const msg = update.message;
-      const rowId = saveInbound({
+      const rowId = await saveInbound({
         chat_id: CHAT,
         message_id: String(msg.message_id),
         user_id: "42",
@@ -112,12 +112,12 @@ async function alwaysPersistError(): Promise<UpdateStatus> {
   return "persistError";
 }
 
-function storedMessageIds(): Set<string> {
-  return new Set(getUnread(CHAT).map((r) => String(r.message_id)));
+async function storedMessageIds(): Promise<Set<string>> {
+  return new Set((await getUnread(CHAT)).map((r) => String(r.message_id)));
 }
 
-beforeAll(() => {
-  initStore();
+beforeAll(async () => {
+  await initStore();
   // broadcastSystemAlert defaults its recipients to loadAccess().allowFrom;
   // give it a non-empty allowlist so these tests actually exercise the send
   // path instead of hitting the "no recipients" no-op branch. Undone in
@@ -158,7 +158,7 @@ describe("processBatch never advances past an un-persisted update", () => {
 
     // The preceding success is durably stored; the failed + deferred
     // updates are NOT.
-    const ids = storedMessageIds();
+    const ids = await storedMessageIds();
     expect(ids.has("7001")).toBe(true); // u1 persisted
     expect(ids.has("7002")).toBe(false); // u2 threw
     expect(ids.has("7003")).toBe(false); // u3 deferred (never handled)

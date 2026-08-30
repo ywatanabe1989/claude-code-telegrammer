@@ -1,5 +1,11 @@
 /**
- * Tests for SQLite message store (store.ts)
+ * Tests for the PostgreSQL message store (store.ts).
+ *
+ * Every call is awaited now: the store crossed a process boundary onto a
+ * real server, so nothing about it can be synchronous any more. The
+ * namespace is the throwaway one ts/test/preload.ts minted for this
+ * process, which is also what lib/hermetic-guard.ts checks before the store
+ * will open at all.
  */
 
 import { describe, test, expect, beforeAll } from "bun:test";
@@ -18,12 +24,12 @@ import {
 } from "../lib/store.js";
 
 describe("message store", () => {
-  beforeAll(() => {
-    initStore();
+  beforeAll(async () => {
+    await initStore();
   });
 
-  test("saveInbound stores a message and returns row id", () => {
-    const rowId = saveInbound({
+  test("saveInbound stores a message and returns row id", async () => {
+    const rowId = await saveInbound({
       chat_id: "100",
       message_id: "1",
       user_id: "42",
@@ -40,8 +46,8 @@ describe("message store", () => {
     expect(typeof rowId).toBe("number");
   });
 
-  test("saveInbound deduplicates on (chat_id, message_id, direction)", () => {
-    const rowId = saveInbound({
+  test("saveInbound deduplicates on (chat_id, message_id, direction)", async () => {
+    const rowId = await saveInbound({
       chat_id: "100",
       message_id: "1",
       user_id: "42",
@@ -57,8 +63,8 @@ describe("message store", () => {
     expect(rowId).toBeNull();
   });
 
-  test("getUnread returns unread inbound messages", () => {
-    const unread = getUnread();
+  test("getUnread returns unread inbound messages", async () => {
+    const unread = await getUnread();
     expect(unread.length).toBeGreaterThanOrEqual(1);
     // bun runs test files in one process and shares the singleton store,
     // so other *.test.ts files may have inserted rows ahead of "Hello".
@@ -68,23 +74,23 @@ describe("message store", () => {
     expect(hello!.read_at).toBeNull();
   });
 
-  test("getUnread filters by chat_id", () => {
-    const unread = getUnread("100");
+  test("getUnread filters by chat_id", async () => {
+    const unread = await getUnread("100");
     expect(unread.length).toBeGreaterThanOrEqual(1);
-    const unreadOther = getUnread("999");
+    const unreadOther = await getUnread("999");
     expect(unreadOther.length).toBe(0);
   });
 
-  test("markRead marks a single message as read", () => {
-    const unread = getUnread("100");
+  test("markRead marks a single message as read", async () => {
+    const unread = await getUnread("100");
     const id = unread[0].id as number;
-    markRead(id);
-    const afterMark = getUnread("100");
+    await markRead(id);
+    const afterMark = await getUnread("100");
     expect(afterMark.length).toBe(0);
   });
 
-  test("saveOutbound stores outbound message", () => {
-    const rowId = saveOutbound("100", "Reply text", "msg-out-1", undefined, {
+  test("saveOutbound stores outbound message", async () => {
+    const rowId = await saveOutbound("100", "Reply text", "msg-out-1", undefined, {
       host: "testhost",
       project: "/test",
       agent_id: "test",
@@ -93,8 +99,8 @@ describe("message store", () => {
     expect(typeof rowId).toBe("number");
   });
 
-  test("saveOutbound with replyToRowId marks inbound as replied", () => {
-    const inboundId = saveInbound({
+  test("saveOutbound with replyToRowId marks inbound as replied", async () => {
+    const inboundId = await saveInbound({
       chat_id: "200",
       message_id: "10",
       user_id: "42",
@@ -109,20 +115,20 @@ describe("message store", () => {
     });
     expect(inboundId).not.toBeNull();
 
-    saveOutbound("200", "Answer", "msg-out-11", inboundId!, {
+    await saveOutbound("200", "Answer", "msg-out-11", inboundId!, {
       host: "testhost",
       project: "/test",
       agent_id: "test",
       bot_token_hash: "abcd1234",
     });
 
-    const history = getHistory("200");
+    const history = await getHistory("200");
     const inbound = history.find((r) => r.id === inboundId);
     expect(inbound?.replied_at).not.toBeNull();
   });
 
-  test("markAllRead marks all messages in a chat as read", () => {
-    saveInbound({
+  test("markAllRead marks all messages in a chat as read", async () => {
+    await saveInbound({
       chat_id: "300",
       message_id: "20",
       user_id: "42",
@@ -135,7 +141,7 @@ describe("message store", () => {
       bot_token_hash: "abcd1234",
       raw_json: "{}",
     });
-    saveInbound({
+    await saveInbound({
       chat_id: "300",
       message_id: "21",
       user_id: "42",
@@ -149,53 +155,53 @@ describe("message store", () => {
       raw_json: "{}",
     });
 
-    expect(getUnread("300").length).toBe(2);
-    markAllRead("300");
-    expect(getUnread("300").length).toBe(0);
+    expect((await getUnread("300")).length).toBe(2);
+    await markAllRead("300");
+    expect((await getUnread("300")).length).toBe(0);
   });
 
-  test("getHistory returns messages in chronological order", () => {
-    const history = getHistory("300");
+  test("getHistory returns messages in chronological order", async () => {
+    const history = await getHistory("300");
     expect(history.length).toBe(2);
     expect((history[0].id as number) < (history[1].id as number)).toBe(true);
   });
 
-  test("getHistory respects limit and offset", () => {
-    const page1 = getHistory("300", 1, 0);
+  test("getHistory respects limit and offset", async () => {
+    const page1 = await getHistory("300", 1, 0);
     expect(page1.length).toBe(1);
-    const page2 = getHistory("300", 1, 1);
+    const page2 = await getHistory("300", 1, 1);
     expect(page2.length).toBe(1);
     expect(page1[0].id).not.toBe(page2[0].id);
   });
 
-  test("offset persistence round-trips", () => {
-    saveOffset(12345);
-    expect(loadOffset()).toBe(12345);
-    saveOffset(99999);
-    expect(loadOffset()).toBe(99999);
+  test("offset persistence round-trips", async () => {
+    await saveOffset(12345);
+    expect(await loadOffset()).toBe(12345);
+    await saveOffset(99999);
+    expect(await loadOffset()).toBe(99999);
   });
 
-  test("searchMessages finds by text", () => {
-    const results = searchMessages("Hello");
+  test("searchMessages finds by text", async () => {
+    const results = await searchMessages("Hello");
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results[0].text).toBe("Hello");
   });
 
-  test("searchMessages filters by chat_id", () => {
-    const results = searchMessages("Msg", "300");
+  test("searchMessages filters by chat_id", async () => {
+    const results = await searchMessages("Msg", "300");
     expect(results.length).toBe(2);
-    const resultsOther = searchMessages("Msg", "999");
+    const resultsOther = await searchMessages("Msg", "999");
     expect(resultsOther.length).toBe(0);
   });
 
-  test("getConversationContext formats messages", () => {
-    const ctx = getConversationContext("300", 10);
+  test("getConversationContext formats messages", async () => {
+    const ctx = await getConversationContext("300", 10);
     expect(ctx).toContain("Msg A");
     expect(ctx).toContain("Msg B");
     expect(ctx).toContain("(user)");
   });
 
-  test("saveInbound persists forward_json column round-trip", () => {
+  test("saveInbound persists forward_json column round-trip", async () => {
     const forwardJson = JSON.stringify({
       kind: "channel",
       from_name: "News Channel",
@@ -203,7 +209,7 @@ describe("message store", () => {
       date_iso: "2024-06-05T04:33:20.000Z",
       original_message_id: "999",
     });
-    const rowId = saveInbound({
+    const rowId = await saveInbound({
       chat_id: "400",
       message_id: "30",
       user_id: "42",
@@ -219,13 +225,13 @@ describe("message store", () => {
     });
     expect(rowId).not.toBeNull();
 
-    const history = getHistory("400");
+    const history = await getHistory("400");
     expect(history.length).toBe(1);
     expect(history[0].forward_json).toBe(forwardJson);
   });
 
-  test("saveInbound without forward_json stores null", () => {
-    const rowId = saveInbound({
+  test("saveInbound without forward_json stores null", async () => {
+    const rowId = await saveInbound({
       chat_id: "401",
       message_id: "31",
       user_id: "42",
@@ -239,7 +245,7 @@ describe("message store", () => {
       raw_json: "{}",
     });
     expect(rowId).not.toBeNull();
-    const history = getHistory("401");
+    const history = await getHistory("401");
     expect(history[0].forward_json).toBeNull();
   });
 });

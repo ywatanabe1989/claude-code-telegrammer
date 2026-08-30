@@ -1,5 +1,5 @@
 /**
- * Health check ("doctor") — THIN adapters over the real fs / network / sqlite.
+ * Health check ("doctor") — THIN adapters over the real fs / network / store.
  *
  * All classification lives in the pure lib/health.ts + lib/health-checks.ts;
  * this module only GATHERS the raw inputs and hands them over:
@@ -30,7 +30,6 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { connect } from "net";
-import { Database } from "bun:sqlite";
 import {
   STATE_DIR,
   ACCESS_FILE,
@@ -57,7 +56,8 @@ import {
   POLLER_CMDLINE_MARKER,
   SERVER_CMDLINE_MARKER,
 } from "./takeover.js";
-import { DB_PATH } from "./store.js";
+import { getSql, resolveSchema } from "./pg.js";
+import { statements } from "./store-schema.js";
 import { wakeEnabled } from "./wake.js";
 import { getWakeFailureState } from "./wake-health.js";
 import {
@@ -237,79 +237,80 @@ export function probeStateDir(dir: string = STATE_DIR): StateDirProbe {
 }
 
 /**
- * messages.db probe — READONLY open (never mutates; safe against the live
- * poller's WAL). Missing DB is a normal first-run state, reported as such.
+ * Store probe — reads only, never mutates.
+ *
+ * "Does not exist" is a normal first-run state (the agent's namespace holds no
+ * tables yet) and is reported as such. UNREACHABLE is deliberately NOT folded
+ * into it: a server we cannot talk to reports `{exists: true, error}` so the
+ * pure check fails the report, because "the store is fine, this is just a
+ * fresh install" is the one thing an outage must never be able to say.
+ *
  * The max stored update_id is extracted from inbound raw_json (the poller
  * persists the whole Telegram update, update_id included) so the pure check
  * can flag a poisoned meta.update_offset.
  */
-export function probeDb(dbPath: string = DB_PATH): DbProbe {
-  if (!existsSync(dbPath)) return { exists: false };
-  let db: Database;
+export async function probeDb(
+  schema: string = resolveSchema(),
+): Promise<DbProbe> {
+  const s = statements(schema);
+  const fail = (err: unknown): DbProbe => ({
+    exists: true,
+    error: err instanceof Error ? err.message : String(err),
+  });
+
+  let sql: ReturnType<typeof getSql>;
   try {
-    db = new Database(dbPath, { readonly: true });
-    // busy_timeout is per-CONNECTION, not inherited from the file's WAL-
-    // mode schema (adversarial-review finding #6) — this ad hoc handle had
-    // none, meaning zero tolerance for lock contention against the live
-    // poller's own writes.
-    db.exec("PRAGMA busy_timeout = 5000;");
+    sql = getSql();
+    const present = (await sql.unsafe(s.tablePresent, [
+      `${schema}.messages`,
+    ])) as Array<{ present: boolean }>;
+    if (!present[0]?.present) return { exists: false };
   } catch (err) {
-    return {
-      exists: true,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    return fail(err);
   }
+
   try {
-    const ver = db
-      .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
-      .get() as { value: string } | undefined;
-    const off = db
-      .prepare("SELECT value FROM meta WHERE key = 'update_offset'")
-      .get() as { value: string } | undefined;
-    const agg = db
-      .prepare(
-        "SELECT MAX(CAST(json_extract(raw_json, '$.update_id') AS INTEGER)) AS max_id, " +
-          "COUNT(*) AS n FROM messages WHERE direction = 'inbound' AND raw_json IS NOT NULL",
-      )
-      .get() as { max_id: number | null; n: number };
+    const readMeta = async (key: string): Promise<string | undefined> => {
+      const rows = (await sql.unsafe(s.metaRead, [key])) as Array<{
+        value: string;
+      }>;
+      return rows[0]?.value;
+    };
+    const ver = await readMeta("schema_version");
+    const off = await readMeta("update_offset");
     // The heartbeat recordSuccessfulPoll() persists. Read here so
     // checkIngestionLive can separate "the poller process exists" from
     // "messages are arriving" — the distinction a month of silence hid.
-    const poll = db
-      .prepare("SELECT value FROM meta WHERE key = 'last_poll_ts'")
-      .get() as { value: string } | undefined;
-    // Age of the newest inbound row — the "did anything ARRIVE?" signal that
-    // last_poll_ts cannot give (a successful poll returning zero updates looks
-    // exactly like a healthy quiet channel). Converted to epoch-ms in SQL
-    // rather than parsed in TS: received_at is written by SQLite's
-    // datetime('now'), which is UTC without a zone suffix, and `new Date()`
-    // on that string reads it as LOCAL time.
-    const newest = db
-      .prepare(
-        "SELECT MAX(strftime('%s', received_at)) AS s FROM messages " +
-          "WHERE direction = 'inbound' AND received_at IS NOT NULL",
-      )
-      .get() as { s: string | null };
-    const parsedOffset = off ? parseInt(off.value, 10) : NaN;
-    const parsedPoll = poll ? parseInt(poll.value, 10) : NaN;
+    const poll = await readMeta("last_poll_ts");
+    const agg = (
+      (await sql.unsafe(s.probeAggregate, [])) as Array<{
+        max_id: string | null;
+        n: string;
+      }>
+    )[0];
+    const newest = (
+      (await sql.unsafe(s.probeNewestInbound, [])) as Array<{
+        s: string | null;
+      }>
+    )[0];
+
+    const parsedOffset = off === undefined ? NaN : parseInt(off, 10);
+    const parsedPoll = poll === undefined ? NaN : parseInt(poll, 10);
+    const parsedMaxId =
+      agg.max_id === null ? NaN : parseInt(agg.max_id, 10);
     const parsedNewest =
-      newest.s === null ? NaN : parseInt(newest.s, 10) * 1000;
+      newest.s === null ? NaN : Math.round(parseFloat(newest.s) * 1000);
     return {
       exists: true,
-      schemaVersion: ver?.value ?? null,
+      schemaVersion: ver ?? null,
       updateOffset: Number.isFinite(parsedOffset) ? parsedOffset : null,
-      maxUpdateId: agg.max_id ?? null,
-      inboundCount: agg.n,
+      maxUpdateId: Number.isFinite(parsedMaxId) ? parsedMaxId : null,
+      inboundCount: parseInt(agg.n, 10),
       lastPollTs: Number.isFinite(parsedPoll) ? parsedPoll : null,
       newestInboundMs: Number.isFinite(parsedNewest) ? parsedNewest : null,
     };
   } catch (err) {
-    return {
-      exists: true,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  } finally {
-    db.close();
+    return fail(err);
   }
 }
 
@@ -410,7 +411,7 @@ export async function runHealth(opts: {
   }
 
   const wakeReachability = await probeWakeReachability();
-  const wakeBacklog = wakeEnabled() ? getWakeFailureState() : null;
+  const wakeBacklog = wakeEnabled() ? await getWakeFailureState() : null;
 
   return buildHealthReport({
     agentId: AGENT_ID,
@@ -424,7 +425,7 @@ export async function runHealth(opts: {
     poller,
     access,
     stateDirProbe: probeStateDir(),
-    db: probeDb(),
+    db: await probeDb(),
     wakeReachability,
     wakeBacklog,
     codeCurrency: probeCodeCurrency(),

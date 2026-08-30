@@ -6,9 +6,8 @@
 
 import { join } from "path";
 import { mkdirSync } from "fs";
-import { Database } from "bun:sqlite";
 import { ATTACHMENT_DIR } from "./config.js";
-import { DB_PATH } from "./store.js";
+import { markAttachmentDownloaded } from "./store.js";
 import { getFile, downloadFile } from "./telegram-api.js";
 import { log } from "./log.js";
 
@@ -21,19 +20,6 @@ interface QueueItem {
 
 const queue: QueueItem[] = [];
 let processing = false;
-
-// ── DB access (reuse the same DB file as store.ts) ────────────────────────
-
-function getDb(): Database {
-  const db = new Database(DB_PATH);
-  // busy_timeout is per-CONNECTION, not persisted in the file — WAL mode
-  // (set once, at schema-creation time) does NOT imply every later
-  // connection inherits a nonzero busy_timeout (adversarial-review finding
-  // #6: this ad hoc handle had none, defaulting to 0 — zero tolerance for
-  // lock contention against the poller's own writes).
-  db.exec("PRAGMA busy_timeout = 5000;");
-  return db;
-}
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -75,16 +61,18 @@ async function processQueue(): Promise<void> {
     try {
       const localPath = await downloadNow(item.fileId, item.chatId);
 
-      // Update attachments table
+      // Record the completed download on the attachment row. This used to
+      // open its own ad hoc database handle and re-spell the UPDATE by hand;
+      // it now calls the store's own writer, so there is one statement to
+      // keep correct instead of two that could drift.
       try {
-        const db = getDb();
-        db.prepare(
-          `UPDATE attachments SET local_path = ?, downloaded_at = datetime('now')
-           WHERE message_row_id = ? AND file_id = ?`,
-        ).run(localPath, item.messageRowId, item.fileId);
-        db.close();
+        await markAttachmentDownloaded(
+          item.messageRowId,
+          item.fileId,
+          localPath,
+        );
       } catch (dbErr) {
-        log("attachments", "failed to update DB after download", {
+        log("attachments", "failed to update the store after download", {
           error: String(dbErr),
           fileId: item.fileId,
         });

@@ -38,13 +38,62 @@ jobs:
           bash tests/test-state-detection.sh
 
   test-ts:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # ubuntu-latest, NOT the self-hosted pool, because this job needs a service
+    # container and therefore needs Docker on the runner. Same reasoning and
+    # same shape as scitex-cards' postgres-backend leg, which is the fleet
+    # precedent for "a package whose canonical store is PostgreSQL needs a CI
+    # leg that actually connects to one".
+    runs-on: ubuntu-latest
+
+    # THE STORE IS NOT OPTIONAL HERE. lib/store.ts refuses to start without a
+    # connection string — deliberately, since a silent local fallback is the
+    # failure the storage-engine move exists to remove — so without this
+    # service the store-backed tests do not skip, they FAIL. That is the
+    # intended behaviour: a green leg that never reached a database would be
+    # worth nothing.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cct
+          POSTGRES_PASSWORD: cct
+          POSTGRES_DB: cct
+        ports:
+          - 5432:5432
+        # Without a health check the steps race the server's startup and fail
+        # with a connection error that looks exactly like a real defect.
+        options: >-
+          --health-cmd "pg_isready -U cct"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install
         working-directory: ts
+
+      - name: Confirm the store is reachable before blaming the tests
+        # A connection failure inside the suite surfaces as dozens of unrelated
+        # assertion errors. Proving reachability here keeps the later failure
+        # honest about what actually broke.
+        env:
+          SCITEX_STORE_DSN: postgresql://cct:cct@127.0.0.1:5432/cct
+        run: |
+          bun --eval '
+            const { SQL } = await import("bun");
+            const sql = new SQL(process.env.SCITEX_STORE_DSN);
+            const [row] = await sql`SELECT version() AS v, pg_is_in_recovery() AS ro`;
+            console.log(row.v.split(",")[0], "recovery:", row.ro);
+            await sql.close();
+          '
+
       - name: Run TypeScript tests
+        # The credential here is the throwaway one this workflow just created
+        # for its own service container; it exists for the length of the job.
+        env:
+          SCITEX_STORE_DSN: postgresql://cct:cct@127.0.0.1:5432/cct
         run: bun test
         working-directory: ts

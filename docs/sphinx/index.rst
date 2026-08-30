@@ -35,7 +35,7 @@ Why Not the Official Plugin?
      - Clean shutdown on stdin close / SIGTERM
    * - Message persistence
      - No local history
-     - SQLite store with full-text search
+     - PostgreSQL store with text search
    * - Access control
      - Basic allowlist
      - DM + group policies, mtime hot-reload
@@ -68,7 +68,7 @@ Key Features
 - **10 MCP Tools** -- ``reply``, ``react``, ``edit_message``,
   ``get_history``, ``get_unread``, ``mark_read``, ``download_attachment``,
   ``send_document``, ``search_messages``, ``get_context``.
-- **SQLite Message Store** -- all messages persisted in WAL-mode SQLite
+- **PostgreSQL Message Store** -- all messages persisted to the fleet's PostgreSQL server, one schema per agent
   with full-text search, threading metadata, and attachment tracking.
 - **Allowlist Access Control** -- DM and group policies via env var and
   ``access.json``, merged at runtime with mtime-based hot-reload.
@@ -114,7 +114,7 @@ Architecture
         v
     Custom Telegram MCP Server (ts/telegram-server.ts)
         Bun + @modelcontextprotocol/sdk
-        Poller | SQLite Store | 10 MCP Tools | Attachments
+        Poller | Message Store | 10 MCP Tools | Attachments
         Access Control | Config (env vars) | PID Lock
         |
         | MCP stdio
