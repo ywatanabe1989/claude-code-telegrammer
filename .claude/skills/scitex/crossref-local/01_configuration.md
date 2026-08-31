@@ -5,14 +5,14 @@ skill: configuration
 
 # Configuration
 
-crossref-local supports two access modes: direct SQLite (`db`) and HTTP API
+crossref-local supports two access modes: direct embedded-DB (`db`) and HTTP API
 (`http`). Mode is auto-detected from environment variables.
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CROSSREF_LOCAL_DB` | Path to SQLite database file | auto-detect |
+| `CROSSREF_LOCAL_DB` | Path to the embedded database file | auto-detect |
 | `SCITEX_SCHOLAR_CROSSREF_DB` | Alternative DB path (higher priority) | — |
 | `CROSSREF_LOCAL_API_URL` | HTTP API URL | `http://localhost:31291` |
 | `CROSSREF_LOCAL_MODE` | Force mode: `db`, `http`, or `auto` | `auto` |
@@ -33,7 +33,7 @@ crossref-local supports two access modes: direct SQLite (`db`) and HTTP API
 ```python
 import crossref_local as crl
 
-# DB mode — direct SQLite access
+# DB mode — direct embedded-DB access
 crl.configure("/path/to/crossref.db")
 
 # HTTP mode — connect to relay server
@@ -74,7 +74,7 @@ crl.configure_http()   # default localhost:31291 — now tunneled to server
 
 ## HTTP Relay Server
 
-Start a relay server to expose the local SQLite DB over HTTP:
+Start a relay server to expose the local embedded DB over HTTP:
 
 ```bash
 crossref-local relay                    # binds 0.0.0.0:31291

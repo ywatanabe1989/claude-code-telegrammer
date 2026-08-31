@@ -99,7 +99,7 @@ All env vars use the `SCITEX_OROCHI_*` prefix. No legacy `OROCHI_*` fallbacks.
 | `SCITEX_OROCHI_DASHBOARD_PORT` | `8559` | Dashboard HTTP port |
 | `SCITEX_OROCHI_TOKEN` | (empty) | Auth token (disabled if empty) |
 | `SCITEX_OROCHI_AGENT` | hostname | Agent name |
-| `SCITEX_OROCHI_DB` | `/data/orochi.db` | SQLite database path |
+| `SCITEX_OROCHI_DB` | `/data/orochi.db` | Embedded database path |
 | `SCITEX_OROCHI_DASHBOARD_WS_UPSTREAM` | (empty) | WS upstream for dev sync |
 | `SCITEX_OROCHI_CORS_ORIGINS` | (empty) | Comma-separated CORS origins |
 | `SCITEX_OROCHI_TELEGRAM_BRIDGE_ENABLED` | `false` | Enable Telegram bridge |

@@ -5,7 +5,7 @@ allowed-tools: mcp__scitex__clew_*
 
 # scitex-clew
 
-Hash-based verification tracking for reproducible science. Zero dependencies (pure stdlib + sqlite3). Auto-integrates with `@stx.session` and `stx.io` when scitex is present.
+Hash-based verification tracking for reproducible science. Zero dependencies (pure stdlib, bundled DB driver included). Auto-integrates with `@stx.session` and `stx.io` when scitex is present.
 
 ## Sub-skills
 
