@@ -20,7 +20,7 @@ description: Database architecture, build pipeline, access modes, and deployment
 # 1. Download OpenAlex snapshot (~300 GB compressed)
 python scripts/database/01_download_snapshot.py
 
-# 2. Build SQLite database
+# 2. Build the embedded database
 python scripts/database/02_build_database.py
 
 # 3. Build FTS5 search index

@@ -103,7 +103,7 @@ Shows environment variables, database locations, API health, and counts.
 
 ### `relay`
 
-Run an HTTP relay server exposing the SQLite DB over REST.
+Run an HTTP relay server exposing the embedded DB over REST.
 
 ```
 crossref-local relay [OPTIONS]

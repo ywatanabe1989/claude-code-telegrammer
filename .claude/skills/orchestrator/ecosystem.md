@@ -18,8 +18,8 @@
 | scitex-dev | ~/proj/scitex-dev | Ecosystem management tools | Python |
 | scitex-clew | ~/proj/scitex-clew | Reproducibility verification | Python |
 | socialia | ~/proj/socialia | Social media management | Python |
-| crossref-local | ~/proj/crossref-local | 167M+ works citation DB | Python, SQLite |
-| openalex-local | ~/proj/openalex-local | 284M+ works academic DB | Python, SQLite |
+| crossref-local | ~/proj/crossref-local | 167M+ works citation DB | Python, embedded DB |
+| openalex-local | ~/proj/openalex-local | 284M+ works academic DB | Python, embedded DB |
 | scitex-dataset | ~/proj/scitex-dataset | Multi-domain dataset fetcher (biology, pharmacology, neuroscience, medical, ML) | Python |
 | scitex-container | ~/proj/scitex-container | Apptainer/Docker management | Python, Bash |
 | scitex-tunnel | ~/proj/scitex-tunnel | SSH reverse tunnels | Python, Bash |

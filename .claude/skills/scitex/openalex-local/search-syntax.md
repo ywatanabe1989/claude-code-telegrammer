@@ -4,7 +4,7 @@ description: FTS5 full-text search syntax — operators, phrases, filters.
 
 # Search Syntax
 
-Uses SQLite FTS5 for full-text search across 284M+ works.
+Uses the embedded DB's FTS5 index for full-text search across 284M+ works.
 
 ```python
 # Simple terms

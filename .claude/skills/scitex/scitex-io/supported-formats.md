@@ -14,7 +14,7 @@ description: All 30+ supported file formats with extensions, load/save types, an
 | `.xls` | DataFrame | DataFrame | Legacy Excel |
 | `.xlsm` | DataFrame | — | Macro-enabled Excel |
 | `.xlsb` | DataFrame | — | Binary Excel |
-| `.db` | DataFrame | — | SQLite3 database |
+| `.db` | DataFrame | — | Embedded SQL database |
 
 ## Array
 
