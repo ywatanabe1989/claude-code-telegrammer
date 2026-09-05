@@ -278,12 +278,19 @@ export function isProcessMatching(
  * `signalOutgoing` defaults to true; tests can pass false to verify the
  * pidfile is rewritten even when no signal is sent.
  */
+export type ClaimOutgoingVerdict =
+  | "signalled" // a live poller of this agent held the pidfile: SIGTERMed
+  | "stale-pid-not-a-poller" // the pid exists but is some other process: NOT signalled
+  | "dead"; // nothing at that pid
+
 export function claimAuthoritative(opts: {
   stateDir: string;
   tokenHash: string;
   pid?: number;
   startMs?: number;
   signalOutgoing?: boolean;
+  /** Observability seam: told what became of the outgoing record. */
+  report?: (verdict: ClaimOutgoingVerdict, outgoing: PidfileSnapshot) => void;
 }): PidfileSnapshot | null {
   const pid = opts.pid ?? process.pid;
   const startMs = opts.startMs ?? Date.now();
@@ -294,11 +301,37 @@ export function claimAuthoritative(opts: {
 
   const outgoing = readPidfile(path);
 
-  if (signal && outgoing && outgoing.pid !== pid && isPidAlive(outgoing.pid)) {
-    try {
-      process.kill(outgoing.pid, "SIGTERM");
-    } catch {
-      // best-effort — outgoing may be in another PID namespace
+  // IDENTITY, NOT EXISTENCE, decides whether the outgoing pid gets a signal.
+  // Measured 2026-09-05 on scitex-compute-04 (agent scitex-cards, three
+  // container restarts in one day): this pidfile lives in the agent's state
+  // dir, which SURVIVES a container restart, while the container's pid
+  // namespace does not. A restarted container hands its low pids out again
+  // within seconds, in the same burst that spawns the MCP servers and their
+  // pollers - so the stale pid in the file was reassigned to the telegram MCP
+  // SERVER itself, spawned a few pids before its own poller. The old check
+  // here (isPidAlive: kill(pid, 0)) saw "exists" and SIGTERMed it: the poller
+  // killed its own parent ~1 s after start, and the session reported
+  // CONNECTION_CLOSED. Two restarts died that way (stale 182, stale 179); the
+  // one that survived had read a stale pid (256) above the burst. This is the
+  // "recycled pid" hypothesis in telegram-server.ts's shutdown() comment, with
+  // the container twist that makes it deterministic rather than rare.
+  //
+  // isProcessMatching already does the right thing - alive AND cmdline is a
+  // poller AND environ carries our agent id - and was simply not consulted on
+  // this path. A pid that fails it is a stale record to overwrite silently,
+  // never a process to signal.
+  if (signal && outgoing && outgoing.pid !== pid) {
+    if (!isPidAlive(outgoing.pid)) {
+      opts.report?.("dead", outgoing);
+    } else if (!isProcessMatching(outgoing.pid, POLLER_CMDLINE_MARKER)) {
+      opts.report?.("stale-pid-not-a-poller", outgoing);
+    } else {
+      try {
+        process.kill(outgoing.pid, "SIGTERM");
+      } catch {
+        // best-effort - outgoing may be in another PID namespace
+      }
+      opts.report?.("signalled", outgoing);
     }
   }
 
