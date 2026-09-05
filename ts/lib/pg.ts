@@ -294,7 +294,18 @@ export function getSql(): SQL {
     database: target.database,
     username: target.user,
     ...(target.password === null ? {} : { password: target.password }),
-    max: 4,
+    // POOL SIZE IS A FLEET BUDGET, NOT A LOCAL TUNING KNOB. Measured
+    // 2026-09-05 on the primary (max_connections=100): every agent container
+    // held ~9 idle sessions from boot -- 4 of them this pool, the rest the
+    // comms sidecar -- and ~20 containers exhausted the server ("remaining
+    // connection slots are reserved for ... SUPERUSER"); every fleet card
+    // write failed until a postmaster restart. One MCP server serves one
+    // Claude session, so two connections cover a poll overlapping a reply,
+    // and an idle connection is returned to the server after a minute
+    // instead of being held for the life of the process.
+    max: 2,
+    idleTimeout: 60,
+    maxLifetime: 3600,
   });
   return pool;
 }
