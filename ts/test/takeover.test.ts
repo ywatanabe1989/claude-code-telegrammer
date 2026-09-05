@@ -110,6 +110,43 @@ describe("takeover: readPidfile", () => {
 });
 
 describe("takeover: claimAuthoritative", () => {
+  test("does NOT signal a live pid that is not a poller (a stale record from a previous pid namespace)", () => {
+    // The pidfile names THIS test process: alive, but its cmdline is the test
+    // runner, not telegram-poller. Before the fix this SIGTERMed the caller of
+    // the assertion below - i.e. the regression is loud, not silent.
+    const dir = freshStateDir("stale-namespace");
+    writeFileSync(pollerPidfilePath(dir, TOKEN_HASH), `${process.pid}\n1\n`);
+    const verdicts: string[] = [];
+    const outgoing = claimAuthoritative({
+      stateDir: dir,
+      tokenHash: TOKEN_HASH,
+      pid: process.pid + 1,
+      report: (verdict) => verdicts.push(verdict),
+    });
+    expect(outgoing?.pid).toBe(process.pid);
+    expect(verdicts).toEqual(["stale-pid-not-a-poller"]);
+    expect(readPidfile(pollerPidfilePath(dir, TOKEN_HASH))?.pid).toBe(process.pid + 1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("reports a dead outgoing pid as dead, and still overwrites", () => {
+    const dir = freshStateDir("dead-outgoing");
+    // A pid no process can hold: above Linux's default pid_max is not
+    // guaranteed, so use a child that has already exited instead.
+    const child = Bun.spawnSync(["true"]);
+    writeFileSync(pollerPidfilePath(dir, TOKEN_HASH), `${child.pid}\n1\n`);
+    const verdicts: string[] = [];
+    claimAuthoritative({
+      stateDir: dir,
+      tokenHash: TOKEN_HASH,
+      pid: process.pid,
+      report: (verdict) => verdicts.push(verdict),
+    });
+    expect(verdicts).toEqual(["dead"]);
+    expect(readPidfile(pollerPidfilePath(dir, TOKEN_HASH))?.pid).toBe(process.pid);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   let stateDir: string;
   beforeEach(() => {
     stateDir = freshStateDir("claim");

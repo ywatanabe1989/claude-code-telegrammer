@@ -34,6 +34,7 @@ import {
   mkdirSync,
 } from "fs";
 import { STATE_DIR, LOCK_FILE } from "./config.js";
+import { isProcessMatching, SERVER_CMDLINE_MARKER } from "./takeover.js";
 import { log } from "./log.js";
 
 /** ms between kill(pid,0) probes while waiting for the outgoing process to exit. */
@@ -100,6 +101,20 @@ export function acquireLock(opts: { signalOutgoing?: boolean } = {}): void {
       return;
     } else if (!isPidAlive(outgoingPid)) {
       log("lock", "removing stale lock file", { outgoingPid });
+    } else if (!isProcessMatching(outgoingPid, SERVER_CMDLINE_MARKER)) {
+      // The pid is ALIVE but it is not a telegram MCP server of this agent.
+      // Measured 2026-09-05 (scitex-compute-04): this lockfile lives in the
+      // state dir, which survives a container restart; the pid namespace does
+      // not, and a restarted container reissues low pids within seconds. So
+      // the recorded pid now belongs to whatever the new burst spawned there -
+      // a sibling MCP server, the poller, a hook. Signalling it is how the
+      // per-token pidfile's twin of this branch killed the MCP server at
+      // start. A live-but-foreign pid is a STALE record: overwrite, no signal.
+      log(
+        "lock",
+        "lockfile names a live pid that is NOT a telegram MCP server of this agent (recycled pid) — treating as stale, no signal",
+        { outgoingPid, ourPid: process.pid },
+      );
     } else {
       // NEWEST WINS: take over from the live incumbent.
       log(

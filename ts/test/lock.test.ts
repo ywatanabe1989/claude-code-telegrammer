@@ -14,6 +14,32 @@ import { acquireLock, releaseLock } from "../lib/lock.js";
 import { LOCK_FILE, STATE_DIR } from "../lib/config.js";
 
 describe("lock", () => {
+  test("a live pid that is NOT a telegram MCP server is a stale record: overwritten, never signalled", () => {
+    // Measured 2026-09-05: the lockfile survives a container restart, the pid
+    // namespace does not, so the recorded pid is reissued to some other
+    // process within seconds. Stand in for that process with a `sleep` child:
+    // alive, and its cmdline is not telegram-server. The OLD branch SIGTERMed
+    // it; the new one must leave it running and just take the lock.
+    mkdirSync(STATE_DIR, { recursive: true });
+    const bystander = Bun.spawn(["sleep", "30"]);
+    try {
+      writeFileSync(LOCK_FILE, String(bystander.pid));
+      acquireLock();
+      expect(readFileSync(LOCK_FILE, "utf8").trim()).toBe(String(process.pid));
+      // Still alive: a SIGTERMed sleep would have exited by now.
+      let alive = true;
+      try {
+        process.kill(bystander.pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(true);
+    } finally {
+      bystander.kill();
+      releaseLock();
+    }
+  });
+
   beforeEach(() => {
     // Ensure clean state
     try {
@@ -140,7 +166,14 @@ describe("lock", () => {
     // acquireLock returns; the lockfile is ours; the subprocess is
     // dead. This is the integration test for the SIGTERM-grace path
     // without endangering the test orchestrator.
-    const child = Bun.spawn(["sleep", "30"], {
+    //
+    // The incumbent must LOOK like a telegram MCP server now: acquireLock
+    // signals only a pid whose cmdline is telegram-server (a live pid with
+    // any other cmdline is a recycled pid from a previous container and is
+    // treated as stale - see the test above). `exec -a` sets argv[0], so
+    // /proc/<pid>/cmdline reads "telegram-server" while the process is a
+    // plain sleep with the default SIGTERM disposition.
+    const child = Bun.spawn(["bash", "-c", "exec -a telegram-server sleep 30"], {
       stdout: "ignore",
       stderr: "ignore",
     });

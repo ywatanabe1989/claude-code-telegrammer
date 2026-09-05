@@ -16,6 +16,7 @@ import { checkBridgeIdentity } from "./turn-identity.js";
 import { saveOffset, loadOffset } from "./store.js";
 import {
   claimAuthoritative,
+  type ClaimOutgoingVerdict,
   checkAuthority,
   isAuthoritative,
   releaseAuthoritative,
@@ -131,17 +132,33 @@ export async function startPolling(): Promise<void> {
   let displacedLivePredecessor = false;
 
   try {
+    // The verdict on the outgoing record is logged by NAME. Before this, every
+    // takeover logged "preempted previous poller" whether it had SIGTERMed a
+    // live poller, skipped a dead pid, or - the 2026-09-05 incident - signalled
+    // a process that merely held a recycled pid (the MCP server, in a fresh
+    // container namespace). Three different worlds, one log line; the
+    // investigation had to reconstruct which from pid arithmetic.
+    let verdict: ClaimOutgoingVerdict | null = null;
     const outgoing = claimAuthoritative({
       stateDir: STATE_DIR,
       tokenHash: BOT_TOKEN_HASH,
+      report: (v) => {
+        verdict = v;
+      },
     });
     if (outgoing && outgoing.pid !== process.pid) {
-      displacedLivePredecessor = true;
-      log(
-        "poller",
-        "preempted previous poller (newest wins) — wrote our PID to pidfile",
-        { outgoingPid: outgoing.pid, ourPid: process.pid },
-      );
+      displacedLivePredecessor = verdict === "signalled";
+      const what =
+        verdict === "signalled"
+          ? "preempted previous poller (newest wins) — SIGTERM sent, wrote our PID to pidfile"
+          : verdict === "stale-pid-not-a-poller"
+            ? "pidfile named a pid that is NOT a poller of this agent (recycled pid) — no signal sent, overwrote the stale record"
+            : "pidfile named a dead pid — overwrote the stale record";
+      log("poller", what, {
+        outgoingPid: outgoing.pid,
+        ourPid: process.pid,
+        verdict: verdict ?? "unreported",
+      });
     } else {
       log("poller", "claimed pidfile (no prior poller recorded)", {
         ourPid: process.pid,
